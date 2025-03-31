@@ -57,34 +57,28 @@ wss.on('connection', async (ws) => {
         conversationLog.push({ role: 'user', content: finalTranscript.text });
 
         // Get history of conversation
-        const history = conversationLog.map((message) => {
-            if (message.role === 'user') {
-                return `User: ${message.content}`;
-            } else {
-                return `AI: ${message.content}`;
-            }
-        }).join('\n');
+        const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
         const aiPrompt = `You are a helpful AI assistant. Keep your responses concise and natural.\n\n${history}\nUser: ${finalTranscript.text}\nAI:`;
+
         // Get AI response
         const response = await getResponse(aiPrompt);
         console.log(`AI: ${response}`);
-        
+
         // Log AI response
         conversationLog.push({ role: 'AI', content: response });
 
-        // Check if the user wants to say goodbye
-        const goodbyeKeywords = ['goodbye', 'bye', 'end the call'];
-        if (goodbyeKeywords.some(keyword => finalTranscript.text.toLowerCase().includes(keyword))) {
-            console.log('User said goodbye. Sending final message and closing connection...');
-    
-            const mediaMessage = await getTwilioMessage(response, streamSid);
-            ws.send(mediaMessage);
+        const mediaMessage = await getTwilioMessage(response, streamSid);
+        ws.send(mediaMessage);
 
-            // Close the WebSocket connection after sending the final message
+        // Use OpenAI to detect if the user wants to say goodbye
+        const intentPrompt = `Determine if the user wants to end the conversation. Respond with "yes" or "no".\n\nUser: ${finalTranscript.text}\nDoes the user want to end the conversation?`;
+        const intentResponse = await getResponse(intentPrompt);
+        console.log(`Intent response: ${intentResponse}`);
+        if (intentResponse.trim().toLowerCase() === 'yes') {
+            console.log('User wants to end the conversation. Closing connection...');
+            // Close the WebSocket connection
             setTimeout(() => ws.close(), 1000); // Delay to ensure the message is sent
-        } else {
-            const mediaMessage = await getTwilioMessage(response, streamSid);
-            ws.send(mediaMessage);
+            return;
         }
     });
 
