@@ -5,6 +5,9 @@ import 'dotenv/config';
 import { RealtimeService } from 'assemblyai';
 import { OpenAI } from 'openai';
 
+import { synthesizeSpeech } from "./tts.js";
+import { convertToMulaw } from "./convert.js";
+
 // Initialize OpenAI client
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
@@ -30,6 +33,7 @@ app.post('/', async (req, res) => {
 // the WebSocket server for the Twilio media stream to connect to.
 const wss = new WebSocketServer({ server });
 wss.on('connection', async (ws) => {
+    let streamSid = null;
     console.log('Twilio media stream WebSocket connected')
     const transcriber = new RealtimeService({
         apiKey: process.env.ASSEMBLYAI_API_KEY,
@@ -50,6 +54,15 @@ wss.on('connection', async (ws) => {
         console.log(finalTranscript.text);
         const response = await getResponse(finalTranscript.text);
         console.log(`AI: ${response}`);
+        const audio = await getAudioToTwilio(response);
+        const base64Audio = Buffer.from(audio).toString('base64')
+        // Send the audio to Twilio media stream
+        const mediaMessage = JSON.stringify({
+            event: "media",
+            streamSid: streamSid,
+            media: { payload: base64Audio },
+        });
+        ws.send(mediaMessage);
     });
     transcriber.on('open', () => console.log('Connected to real-time service'));
     transcriber.on('error', console.error);
@@ -63,6 +76,7 @@ wss.on('connection', async (ws) => {
                 break;
             case 'start':
                 console.info('Twilio media stream started');
+                streamSid = msg.streamSid;
                 break;
             case 'media':
                 // Make sure the transcriber is connected before sending audio
@@ -100,6 +114,18 @@ async function getResponse(prompt) {
 
     const aiResponse = completion.choices[0].message.content;
     return aiResponse;
+}
+
+async function getAudioToTwilio(text) {
+    console.log("🎙️ Generating speech for:", text);
+    try {
+        const ttsAudio = await synthesizeSpeech(text);
+        const mulawAudio = await convertToMulaw(ttsAudio);
+
+        return mulawAudio;
+    } catch (error) {
+        console.error("❌ Error in TTS:", error);
+    }
 }
 
 console.log('Listening on port 8000');
