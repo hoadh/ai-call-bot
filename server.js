@@ -4,7 +4,6 @@ import { WebSocketServer } from 'ws';
 import 'dotenv/config';
 import { RealtimeService } from 'assemblyai';
 import { OpenAI } from 'openai';
-
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
 
@@ -14,14 +13,19 @@ const openai = new OpenAI({
 });
 
 const app = express();
+app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
 app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'));
 // Tell Twilio to say something and then establish a media stream with the WebSocket server
 app.post('/', async (req, res) => {
+    const callerNumber = req.body.From;
+    console.log(`📞 Incoming call from: ${callerNumber}`);
     res.type('xml').send(
         `<Response>
         <Connect>
-          <Stream url='wss://${req.headers.host}' />
+          <Stream url='wss://${req.headers.host}'>
+            <Parameter name="caller_id" value="${callerNumber}"/>
+          </Stream>
         </Connect>
       </Response>`
     );
@@ -67,6 +71,10 @@ wss.on('connection', async (ws) => {
             case 'start':
                 console.info('Twilio media stream started');
                 streamSid = msg.streamSid;
+                const { customParameters } = msg.start;
+                // Get the caller ID from the custom parameters
+                const callerId = customParameters.caller_id;
+                console.log(`📞 Caller ID: ${callerId}`);
                 ws.send(await getTwilioMessage("Hello! I am your AI assistant. How can I help you today?", streamSid));
                 break;
             case 'media':
