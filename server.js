@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import 'dotenv/config';
-import { RealtimeService } from 'assemblyai';
+import { RealtimeTranscriber } from 'assemblyai';
 import { OpenAI } from 'openai';
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
@@ -37,7 +37,7 @@ wss.on('connection', async (ws) => {
     let streamSid = null;
     let conversationLog = []; // Initialize conversation log for the call
     console.log('Twilio media stream WebSocket connected');
-    const transcriber = new RealtimeService({
+    const transcriber = new RealtimeTranscriber({
         apiKey: process.env.ASSEMBLYAI_API_KEY,
         // Twilio media stream sends audio in mulaw format
         encoding: 'pcm_mulaw',
@@ -51,33 +51,33 @@ wss.on('connection', async (ws) => {
     });
     transcriber.on('transcript.final', async (finalTranscript) => {
         console.clear();
-        console.log(finalTranscript.text);
+        const userMessage = finalTranscript.text;
 
         // Log user input
-        conversationLog.push({ role: 'user', content: finalTranscript.text });
+        console.log(`User: ${userMessage}`);
+        conversationLog.push({ role: 'user', content: userMessage });
 
         // Get history of conversation
         const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
-        const aiPrompt = `You are a helpful AI assistant. Keep your responses concise and natural.\n\n${history}\nUser: ${finalTranscript.text}\nAI:`;
-
-        // Get AI response
-        const response = await getResponse(aiPrompt);
-        console.log(`AI: ${response}`);
-
-        // Log AI response
-        conversationLog.push({ role: 'AI', content: response });
-
-        const mediaMessage = await getTwilioMessage(response, streamSid);
-        ws.send(mediaMessage);
-
+        let guideline = "You are a helpful AI assistant. Keep your responses concise and natural.";
+        
         // Use OpenAI to detect if the user wants to say goodbye
-        const intentPrompt = `Determine if the user wants to end the conversation. Respond with "yes" or "no".\n\nUser: ${finalTranscript.text}\nDoes the user want to end the conversation?`;
-        const intentResponse = await getResponse(intentPrompt);
-        console.log(`Intent response: ${intentResponse}`);
-        if (intentResponse.trim().toLowerCase() === 'yes') {
+        const isGoodbyeResponse = await isGoodbye(userMessage);
+        if (isGoodbyeResponse) {
+            guideline = "You are a helpful AI assistant. Keep your responses concise and natural. The user wants to end the conversation.";
+        }
+
+        const aiResponse = await getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+        console.log(`AI: ${aiResponse}`);
+        conversationLog.push({ role: 'AI', content: aiResponse });
+
+        const mediaMessage = await getTwilioMessage(aiResponse, streamSid);
+        ws.send(mediaMessage);
+        
+        if (isGoodbyeResponse) {
             console.log('User wants to end the conversation. Closing connection...');
             // Close the WebSocket connection
-            setTimeout(() => ws.close(), 1000); // Delay to ensure the message is sent
+            setTimeout(() => ws.close(), 3000); // Delay to ensure the message is sent
             return;
         }
     });
@@ -175,6 +175,15 @@ async function getTwilioMessage(text, streamSid) {
         media: { payload: base64Audio },
     });
     return mediaMessage;
+}
+
+async function isGoodbye(text) {
+    const prompt = `Determine if the user wants to end the conversation. Respond with "yes" or "no".\n\nUser: ${text}\nDoes the user want to end the conversation?`;
+    const intentResponse = await getResponse(prompt);
+    console.log(`Intent response: ${intentResponse}`);
+    return intentResponse.trim().toLowerCase() === 'yes'
+        || intentResponse.trim().toLowerCase() === 'yes.'
+        || intentResponse.trim().toLowerCase().startsWith('yes');
 }
 
 
