@@ -72,14 +72,15 @@ wss.on('connection', async (ws) => {
         conversationLog.push({ role: 'AI', content: aiResponse });
 
         const mediaMessage = await getTwilioMessage(aiResponse, streamSid);
-        ws.send(mediaMessage);
-        
-        if (isGoodbyeResponse) {
-            console.log('User wants to end the conversation. Closing connection...');
-            // Close the WebSocket connection
-            setTimeout(() => ws.close(), 3000); // Delay to ensure the message is sent
-            return;
-        }
+        ws.send(mediaMessage, (error) => {
+            if (error) {
+                console.error('❌ Error sending final message:', error);
+            } else if (isGoodbyeResponse) {
+                console.log('Final message sent. Closing connection...');
+                const delay = Math.ceil(2000); // Convert duration to milliseconds
+                setTimeout(() => ws.close(), delay); // Delay based on audio duration
+            }
+        });
     });
 
     transcriber.on('open', () => console.log('Connected to real-time service'));
