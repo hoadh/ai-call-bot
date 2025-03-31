@@ -35,7 +35,8 @@ app.post('/', async (req, res) => {
 const wss = new WebSocketServer({ server });
 wss.on('connection', async (ws) => {
     let streamSid = null;
-    console.log('Twilio media stream WebSocket connected')
+    let conversationLog = []; // Initialize conversation log for the call
+    console.log('Twilio media stream WebSocket connected');
     const transcriber = new RealtimeService({
         apiKey: process.env.ASSEMBLYAI_API_KEY,
         // Twilio media stream sends audio in mulaw format
@@ -45,19 +46,38 @@ wss.on('connection', async (ws) => {
     })
     const transcriberConnectionPromise = transcriber.connect();
     transcriber.on('transcript.partial', (partialTranscript) => {
-        // Don't print anything when there's silence
         if (!partialTranscript.text) return;
-        // console.clear();
         console.log(partialTranscript.text + "\n");
     });
     transcriber.on('transcript.final', async (finalTranscript) => {
         console.clear();
         console.log(finalTranscript.text);
-        const response = await getResponse(finalTranscript.text);
+
+        // Log user input
+        conversationLog.push({ role: 'user', content: finalTranscript.text });
+
+        // Get history of conversation
+        const history = conversationLog.map((message) => {
+            if (message.role === 'user') {
+                return `User: ${message.content}`;
+            } else {
+                return `AI: ${message.content}`;
+            }
+        }
+        ).join('\n');
+        const aiPrompt = `You are a helpful AI assistant. Keep your responses concise and natural.\n\n${history}\nUser: ${finalTranscript.text}\nAI:`;
+
+        // Get AI response
+        const response = await getResponse(aiPrompt);
         console.log(`AI: ${response}`);
+
+        // Log AI response
+        conversationLog.push({ role: 'AI', content: response });
+
         const mediaMessage = await getTwilioMessage(response, streamSid);
         ws.send(mediaMessage);
     });
+
     transcriber.on('open', () => console.log('Connected to real-time service'));
     transcriber.on('error', console.error);
     transcriber.on('close', () => console.log('Disconnected from real-time service'));
@@ -72,10 +92,11 @@ wss.on('connection', async (ws) => {
                 console.info('Twilio media stream started');
                 streamSid = msg.streamSid;
                 const { customParameters } = msg.start;
-                // Get the caller ID from the custom parameters
                 const callerId = customParameters.caller_id;
                 console.log(`📞 Caller ID: ${callerId}`);
-                ws.send(await getTwilioMessage("Hello! I am your AI assistant. How can I help you today?", streamSid));
+                const welcomeMessage = `Hello ${callerId}, welcome to the AI assistant.`;
+                conversationLog.push({ role: 'assistant', content: welcomeMessage });
+                ws.send(await getTwilioMessage(welcomeMessage, streamSid));
                 break;
             case 'media':
                 // Make sure the transcriber is connected before sending audio
@@ -87,10 +108,24 @@ wss.on('connection', async (ws) => {
                 break;
         }
     });
+
     ws.on('close', async () => {
         console.log('Twilio media stream WebSocket disconnected');
         await transcriber.close();
-    })
+
+        // Save conversation log to a file
+        const fs = await import('fs/promises');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `conversation-${streamSid || 'unknown'}-${timestamp}.json`;
+
+        try {
+            await fs.writeFile(`./conversations/${filename}`, JSON.stringify(conversationLog, null, 2));
+            console.log(`💾 Conversation saved to ./conversations/${filename}`);
+        } catch (error) {
+            console.error('❌ Error saving conversation:', error);
+        }
+    });
+
     await transcriberConnectionPromise;
 });
 
@@ -116,7 +151,7 @@ async function getResponse(prompt) {
 }
 
 async function getAudioToTwilio(text) {
-    console.log("🎙️ Generating speech for:", text);
+    // console.log("🎙️ Generating speech for:", text);
     try {
         const ttsAudio = await synthesizeSpeech(text);
         const mulawAudio = await convertToMulaw(ttsAudio);
