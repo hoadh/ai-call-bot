@@ -20,9 +20,6 @@ app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'
 app.post('/', async (req, res) => {
     res.type('xml').send(
         `<Response>
-        <Say>
-          Speak to see your audio transcribed in the console.
-        </Say>
         <Connect>
           <Stream url='wss://${req.headers.host}' />
         </Connect>
@@ -54,14 +51,7 @@ wss.on('connection', async (ws) => {
         console.log(finalTranscript.text);
         const response = await getResponse(finalTranscript.text);
         console.log(`AI: ${response}`);
-        const audio = await getAudioToTwilio(response);
-        const base64Audio = Buffer.from(audio).toString('base64')
-        // Send the audio to Twilio media stream
-        const mediaMessage = JSON.stringify({
-            event: "media",
-            streamSid: streamSid,
-            media: { payload: base64Audio },
-        });
+        const mediaMessage = await getTwilioMessage(response, streamSid);
         ws.send(mediaMessage);
     });
     transcriber.on('open', () => console.log('Connected to real-time service'));
@@ -77,6 +67,7 @@ wss.on('connection', async (ws) => {
             case 'start':
                 console.info('Twilio media stream started');
                 streamSid = msg.streamSid;
+                ws.send(await getTwilioMessage("Hello! I am your AI assistant. How can I help you today?", streamSid));
                 break;
             case 'media':
                 // Make sure the transcriber is connected before sending audio
@@ -127,6 +118,18 @@ async function getAudioToTwilio(text) {
         console.error("❌ Error in TTS:", error);
     }
 }
+
+async function getTwilioMessage(text, streamSid) {
+    const audio = await getAudioToTwilio(text);
+    const base64Audio = Buffer.from(audio).toString('base64')
+    const mediaMessage = JSON.stringify({
+        event: "media",
+        streamSid: streamSid,
+        media: { payload: base64Audio },
+    });
+    return mediaMessage;
+}
+
 
 console.log('Listening on port 8000');
 server.listen(8000);
