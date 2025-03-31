@@ -63,19 +63,29 @@ wss.on('connection', async (ws) => {
             } else {
                 return `AI: ${message.content}`;
             }
-        }
-        ).join('\n');
+        }).join('\n');
         const aiPrompt = `You are a helpful AI assistant. Keep your responses concise and natural.\n\n${history}\nUser: ${finalTranscript.text}\nAI:`;
-
         // Get AI response
         const response = await getResponse(aiPrompt);
         console.log(`AI: ${response}`);
-
+        
         // Log AI response
         conversationLog.push({ role: 'AI', content: response });
 
-        const mediaMessage = await getTwilioMessage(response, streamSid);
-        ws.send(mediaMessage);
+        // Check if the user wants to say goodbye
+        const goodbyeKeywords = ['goodbye', 'bye', 'end the call'];
+        if (goodbyeKeywords.some(keyword => finalTranscript.text.toLowerCase().includes(keyword))) {
+            console.log('User said goodbye. Sending final message and closing connection...');
+    
+            const mediaMessage = await getTwilioMessage(response, streamSid);
+            ws.send(mediaMessage);
+
+            // Close the WebSocket connection after sending the final message
+            setTimeout(() => ws.close(), 1000); // Delay to ensure the message is sent
+        } else {
+            const mediaMessage = await getTwilioMessage(response, streamSid);
+            ws.send(mediaMessage);
+        }
     });
 
     transcriber.on('open', () => console.log('Connected to real-time service'));
