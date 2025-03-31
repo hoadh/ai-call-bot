@@ -3,6 +3,12 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import 'dotenv/config';
 import { RealtimeService } from 'assemblyai';
+import { OpenAI } from 'openai';
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+});
 
 const app = express();
 const server = createServer(app);
@@ -39,9 +45,11 @@ wss.on('connection', async (ws) => {
         // console.clear();
         console.log(partialTranscript.text + "\n");
     });
-    transcriber.on('transcript.final', (finalTranscript) => {
+    transcriber.on('transcript.final', async (finalTranscript) => {
         console.clear();
         console.log(finalTranscript.text);
+        const response = await getResponse(finalTranscript.text);
+        console.log(`AI: ${response}`);
     });
     transcriber.on('open', () => console.log('Connected to real-time service'));
     transcriber.on('error', console.error);
@@ -72,6 +80,27 @@ wss.on('connection', async (ws) => {
     })
     await transcriberConnectionPromise;
 });
+
+async function getResponse(prompt) {
+    // Get AI response from OpenAI
+    const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+            {
+                role: "system",
+                content: "You are a helpful AI assistant. Keep your responses concise and natural."
+            },
+            {
+                role: "user",
+                content: prompt
+            }
+        ],
+        max_tokens: 150
+    });
+
+    const aiResponse = completion.choices[0].message.content;
+    return aiResponse;
+}
 
 console.log('Listening on port 8000');
 server.listen(8000);
