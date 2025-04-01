@@ -6,8 +6,6 @@ import { RealtimeTranscriber } from 'assemblyai';
 import { OpenAI } from 'openai';
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
-import  twilio from "twilio";
-const { validateRequestWithBody } = twilio;
 import { detectIntentByFunction } from "./intentDetection.js";
 import { detectIntentAndHandle } from "./intentHandling.js";
 import { getCustomerInfo } from './crmAPI.js';
@@ -72,10 +70,6 @@ wss.on('connection', async (ws) => {
 
         const intent = await detectIntentByFunction(userMessage);
         console.log("Detected Intent:", intent);
-        // if (shouldTransferCall(userMessage)) {
-        //     console.log("🔄 Transferring call to human agent...");
-        //     ws.send(JSON.stringify({ event: "stop" })); // Instruct Twilio to stop streaming
-        // }
 
         // Log user input
         console.log(`User: ${userMessage}`);
@@ -91,10 +85,12 @@ wss.on('connection', async (ws) => {
             guideline = "You are a helpful AI Customer Service. Keep your responses concise and natural. The user wants to end the conversation.";
         }
 
-        // let result = await detectIntentAndHandle(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
-        // console.log("Intent Handling Result:", result);
+        // Handle intent and get additional information if needed
+        const intentHandlingResult = await detectIntentAndHandle(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+        console.log("Intent Handling Result:", intentHandlingResult);
 
-        const aiResponse = await getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+        // Use the result from intent handling or fallback to default response
+        const aiResponse = intentHandlingResult || await getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
         console.log(`AI: ${aiResponse}`);
         conversationLog.push({ role: 'AI', content: aiResponse });
 
