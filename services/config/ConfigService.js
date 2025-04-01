@@ -15,7 +15,7 @@ class ConfigService {
             }
 
             // Load new config from API
-            const response = await axios.get(`${this.apiBaseUrl}/businesses/by-phone/${phoneNumberSid}/config`);
+            const response = await axios.get(`${this.apiBaseUrl}/businesses/${phoneNumberSid}`);
             const config = response.data;
 
             // Store config with timestamp
