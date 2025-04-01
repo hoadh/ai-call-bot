@@ -7,6 +7,7 @@ import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
 import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
+import { LanguageService } from './services/language/LanguageService.js';
 import { getCustomerInfo } from './crmAPI.js';
 
 const app = express();
@@ -16,6 +17,7 @@ const server = createServer(app);
 // Initialize services
 const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
 const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
+const languageService = new LanguageService();
 
 app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'));
 
@@ -49,6 +51,7 @@ wss.on('connection', async (ws) => {
     let phoneNumber = null;
     let conversationLog = [];
     let customerInfo = null;
+    let currentLanguage = 'en';
     console.log('Twilio media stream WebSocket connected');
     
     const transcriber = new RealtimeTranscriber({
@@ -68,6 +71,10 @@ wss.on('connection', async (ws) => {
         console.clear();
         const userMessage = finalTranscript.text;
 
+        // Detect language from user message
+        currentLanguage = await languageService.detectLanguage(userMessage);
+        console.log("Detected Language:", currentLanguage);
+
         const intent = await llmService.detectIntent(userMessage);
         console.log("Detected Intent:", intent);
 
@@ -75,11 +82,11 @@ wss.on('connection', async (ws) => {
         conversationLog.push({ role: 'user', content: userMessage });
 
         const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
-        let guideline = await businessService.getSystemPrompt();
+        let guideline = await businessService.getSystemPrompt(currentLanguage);
         
         const isGoodbyeResponse = await llmService.isGoodbye(userMessage);
         if (isGoodbyeResponse) {
-            guideline = await businessService.getGoodbyePrompt();
+            guideline = await businessService.getGoodbyePrompt(currentLanguage);
         }
 
         try {
@@ -92,7 +99,8 @@ wss.on('connection', async (ws) => {
                     intent,
                     userMessage,
                     phoneNumber,
-                    customerInfo
+                    customerInfo,
+                    currentLanguage
                 );
 
                 if (businessResult.shouldTransfer) {
@@ -106,12 +114,16 @@ wss.on('connection', async (ws) => {
 
             if (!aiResponse) {
                 aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+                // Translate the AI response if needed
+                if (currentLanguage !== 'en') {
+                    aiResponse = await languageService.translate(aiResponse, currentLanguage);
+                }
             }
 
             console.log(`AI: ${aiResponse}`);
             conversationLog.push({ role: 'AI', content: aiResponse });
 
-            const mediaMessage = await getTwilioMessage(aiResponse, streamSid);
+            const mediaMessage = await getTwilioMessage(aiResponse, streamSid, currentLanguage);
             ws.send(mediaMessage, (error) => {
                 if (error) {
                     console.error('❌ Error sending final message:', error);
@@ -124,9 +136,13 @@ wss.on('connection', async (ws) => {
         } catch (error) {
             console.error('Error handling intent:', error);
             const aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+            // Translate the error response if needed
+            if (currentLanguage !== 'en') {
+                aiResponse = await languageService.translate(aiResponse, currentLanguage);
+            }
             console.log(`AI: ${aiResponse}`);
             conversationLog.push({ role: 'AI', content: aiResponse });
-            const mediaMessage = await getTwilioMessage(aiResponse, streamSid);
+            const mediaMessage = await getTwilioMessage(aiResponse, streamSid, currentLanguage);
             ws.send(mediaMessage);
         }
     });
@@ -150,10 +166,10 @@ wss.on('connection', async (ws) => {
                 phoneNumber = callerId;
                 
                 customerInfo = await getCustomerInfo(callerId);
-                const welcomeMessage = await businessService.getWelcomeMessage(customerInfo);
+                const welcomeMessage = await businessService.getWelcomeMessage(customerInfo, currentLanguage);
                 console.log(`AI: ${welcomeMessage}`);
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });
-                ws.send(await getTwilioMessage(welcomeMessage, streamSid));
+                ws.send(await getTwilioMessage(welcomeMessage, streamSid, currentLanguage));
                 break;
             case 'media':
                 await transcriberConnectionPromise;
@@ -184,9 +200,9 @@ wss.on('connection', async (ws) => {
     await transcriberConnectionPromise;
 });
 
-async function getAudioToTwilio(text) {
+async function getAudioToTwilio(text, language = 'en') {
     try {
-        const ttsAudio = await synthesizeSpeech(text);
+        const ttsAudio = await synthesizeSpeech(text, language);
         const mulawAudio = await convertToMulaw(ttsAudio);
         return mulawAudio;
     } catch (error) {
@@ -194,8 +210,8 @@ async function getAudioToTwilio(text) {
     }
 }
 
-async function getTwilioMessage(text, streamSid) {
-    const audio = await getAudioToTwilio(text);
+async function getTwilioMessage(text, streamSid, language = 'en') {
+    const audio = await getAudioToTwilio(text, language);
     const base64Audio = Buffer.from(audio).toString('base64')
     const mediaMessage = JSON.stringify({
         event: "media",
