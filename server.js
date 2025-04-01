@@ -6,15 +6,16 @@ import { RealtimeTranscriber } from 'assemblyai';
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
 import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
-import { AppointmentService } from './services/appointmentService.js';
+import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
 import { getCustomerInfo } from './crmAPI.js';
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
 
-// Initialize LLM service
+// Initialize services
 const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
+const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
 
 app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'));
 
@@ -47,6 +48,7 @@ wss.on('connection', async (ws) => {
     let streamSid = null;
     let phoneNumber = null;
     let conversationLog = [];
+    let customerInfo = null;
     console.log('Twilio media stream WebSocket connected');
     
     const transcriber = new RealtimeTranscriber({
@@ -73,11 +75,11 @@ wss.on('connection', async (ws) => {
         conversationLog.push({ role: 'user', content: userMessage });
 
         const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
-        let guideline = "You are a AI Customer Service. Keep your responses concise and natural.";
+        let guideline = await businessService.getSystemPrompt();
         
         const isGoodbyeResponse = await llmService.isGoodbye(userMessage);
         if (isGoodbyeResponse) {
-            guideline = "You are a helpful AI Customer Service. Keep your responses concise and natural. The user wants to end the conversation.";
+            guideline = await businessService.getGoodbyePrompt();
         }
 
         try {
@@ -86,18 +88,23 @@ wss.on('connection', async (ws) => {
 
             let aiResponse;
             if (intentHandlingResult !== "No action required.") {
-                const appointmentResult = await AppointmentService.handleAppointment(
-                    intentHandlingResult.action,
-                    intentHandlingResult.phone_number,
-                    intentHandlingResult.appointment_time
+                const businessResult = await businessService.handleIntent(
+                    intent,
+                    userMessage,
+                    phoneNumber,
+                    customerInfo
                 );
 
-                if (appointmentResult.error) {
-                    aiResponse = `I apologize, but I encountered an error: ${appointmentResult.error}`;
-                } else {
-                    aiResponse = appointmentResult.message;
+                if (businessResult.shouldTransfer) {
+                    console.log("🔄 Transferring call to human agent...");
+                    ws.send(JSON.stringify({ event: "stop" }));
+                    return;
                 }
-            } else {
+
+                aiResponse = businessResult.response;
+            }
+
+            if (!aiResponse) {
                 aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
             }
 
@@ -142,18 +149,8 @@ wss.on('connection', async (ws) => {
                 console.log(`📞 Caller ID: ${callerId}`);
                 phoneNumber = callerId;
                 
-                const customerInfo = await getCustomerInfo(callerId);
-                let guideline = `You are a helpful AI Customer Service. Keep your responses concise and natural.`;
-                if (customerInfo) {
-                    guideline = `You are a AI Customer Service. The phone number is ${callerId}. You should call this customer is ${customerInfo.title} ${customerInfo.nickname}.
-                    Say the welcome message to this customer.`;
-                } else {
-                    console.log(`No customer info found for ${callerId}`);
-                    guideline = `You are a helpful AI Customer Service. Keep your responses concise and natural.
-                    The caller maybe is new customer. You should ask for their name.`;
-                }
-                
-                const welcomeMessage = await llmService.getResponse(guideline);
+                customerInfo = await getCustomerInfo(callerId);
+                const welcomeMessage = await businessService.getWelcomeMessage(customerInfo);
                 console.log(`AI: ${welcomeMessage}`);
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });
                 ws.send(await getTwilioMessage(welcomeMessage, streamSid));
