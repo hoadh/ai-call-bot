@@ -8,6 +8,7 @@ import { convertToMulaw } from "./convert.js";
 import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
 import { LanguageService } from './services/language/LanguageService.js';
+import configService from './services/config/ConfigService.js';
 import { getCustomerInfo } from './crmAPI.js';
 
 const app = express();
@@ -15,6 +16,16 @@ app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
 
 // Initialize services
+async function initializeServices() {
+    try {
+        await configService.initialize();
+        console.log('✅ Configuration loaded successfully');
+    } catch (error) {
+        console.error('❌ Error initializing configuration:', error);
+        process.exit(1);
+    }
+}
+
 const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
 const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
 const languageService = new LanguageService();
@@ -23,12 +34,14 @@ app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'
 
 app.post('/', async (req, res) => {
     const callerNumber = req.body.From;
-    console.log(`📞 Incoming call from: ${callerNumber}`);
+    const phoneNumberSid = req.body.To; // Get the Twilio Phone Number SID
+    console.log(`📞 Incoming call from: ${callerNumber} to: ${phoneNumberSid}`);
     res.type('xml').send(
         `<Response>
         <Connect>
           <Stream url='wss://${req.headers.host}'>
             <Parameter name="caller_id" value="${callerNumber}"/>
+            <Parameter name="phone_number_sid" value="${phoneNumberSid}"/>
           </Stream>
         </Connect>
       </Response>`
@@ -49,6 +62,7 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', async (ws) => {
     let streamSid = null;
     let phoneNumber = null;
+    let phoneNumberSid = null;
     let conversationLog = [];
     let customerInfo = null;
     let currentLanguage = 'en';
@@ -82,11 +96,11 @@ wss.on('connection', async (ws) => {
         conversationLog.push({ role: 'user', content: userMessage });
 
         const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
-        let guideline = await businessService.getSystemPrompt(currentLanguage);
+        let guideline = await businessService.getSystemPrompt(currentLanguage, phoneNumberSid);
         
         const isGoodbyeResponse = await llmService.isGoodbye(userMessage);
         if (isGoodbyeResponse) {
-            guideline = await businessService.getGoodbyePrompt(currentLanguage);
+            guideline = await businessService.getGoodbyePrompt(currentLanguage, phoneNumberSid);
         }
 
         try {
@@ -100,7 +114,8 @@ wss.on('connection', async (ws) => {
                     userMessage,
                     phoneNumber,
                     customerInfo,
-                    currentLanguage
+                    currentLanguage,
+                    phoneNumberSid
                 );
 
                 if (businessResult.shouldTransfer) {
@@ -162,11 +177,13 @@ wss.on('connection', async (ws) => {
                 streamSid = msg.streamSid;
                 const { customParameters } = msg.start;
                 const callerId = customParameters.caller_id.replace('+', '').replace('client:', '');
+                phoneNumberSid = customParameters.phone_number_sid;
                 console.log(`📞 Caller ID: ${callerId}`);
+                console.log(`📱 Phone Number SID: ${phoneNumberSid}`);
                 phoneNumber = callerId;
                 
                 customerInfo = await getCustomerInfo(callerId);
-                const welcomeMessage = await businessService.getWelcomeMessage(customerInfo, currentLanguage);
+                const welcomeMessage = await businessService.getWelcomeMessage(customerInfo, currentLanguage, phoneNumberSid);
                 console.log(`AI: ${welcomeMessage}`);
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });
                 ws.send(await getTwilioMessage(welcomeMessage, streamSid, currentLanguage));
@@ -221,5 +238,18 @@ async function getTwilioMessage(text, streamSid, language = 'en') {
     return mediaMessage;
 }
 
-console.log('Listening on port 8000');
-server.listen(8000);
+// Start the server
+async function startServer() {
+    await initializeServices();
+    server.listen(8000, () => {
+        console.log('🚀 Server is listening on port 8000');
+        console.log(`📞 Business ID: ${process.env.BUSINESS_ID}`);
+        console.log(`🏢 Business Name: ${configService.getBusinessName()}`);
+        console.log(`🌍 Supported Languages: ${configService.getSupportedLanguages().join(', ')}`);
+    });
+}
+
+startServer().catch(error => {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+});
