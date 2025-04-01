@@ -1,5 +1,6 @@
 import { OpenAI } from 'openai';
 import dotenv from "dotenv";
+import { BaseLLMService } from './BaseLLMService.js';
 
 dotenv.config();
 
@@ -65,8 +66,8 @@ const intentHandlingFunctions = [
     }
 ];
 
-export class OpenAIService {
-    static async detectIntent(userMessage) {
+export class OpenAIService extends BaseLLMService {
+    async detectIntent(userMessage) {
         const response = await openai.chat.completions.create({
             model: "gpt-4-turbo",
             messages: [{ role: "user", content: userMessage }],
@@ -82,7 +83,7 @@ export class OpenAIService {
         return "Unknown_Intent";
     }
 
-    static async detectIntentAndHandle(userMessage, phoneNumber) {
+    async detectIntentAndHandle(userMessage, phoneNumber) {
         const messages = [{ role: "user", content: userMessage }];
         if (phoneNumber) {
             messages.push({ role: "user", content: `The phone number of the customer is ${phoneNumber}.` });
@@ -104,7 +105,7 @@ export class OpenAIService {
         return "No action required.";
     }
 
-    static async getResponse(prompt, systemMessage = "You are a helpful Customer Service. Keep your responses concise and natural.") {
+    async getResponse(prompt, systemMessage = "You are a helpful Customer Service. Keep your responses concise and natural.") {
         const completion = await openai.chat.completions.create({
             model: "gpt-4-turbo",
             messages: [
@@ -123,7 +124,7 @@ export class OpenAIService {
         return completion.choices[0].message.content;
     }
 
-    static async isGoodbye(text) {
+    async isGoodbye(text) {
         const prompt = `Determine if the user wants to end the conversation. Respond with "yes" or "no" or "not sure".\n\nUser: ${text}\nDoes the user want to end the conversation?`;
         const intentResponse = await this.getResponse(prompt);
         console.log(`Goodbye response: ${intentResponse}`);

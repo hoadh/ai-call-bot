@@ -5,13 +5,16 @@ import 'dotenv/config';
 import { RealtimeTranscriber } from 'assemblyai';
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
-import { OpenAIService } from './services/openai.js';
+import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { AppointmentService } from './services/appointmentService.js';
 import { getCustomerInfo } from './crmAPI.js';
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
+
+// Initialize LLM service
+const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
 
 app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'));
 
@@ -63,7 +66,7 @@ wss.on('connection', async (ws) => {
         console.clear();
         const userMessage = finalTranscript.text;
 
-        const intent = await OpenAIService.detectIntent(userMessage);
+        const intent = await llmService.detectIntent(userMessage);
         console.log("Detected Intent:", intent);
 
         console.log(`User: ${userMessage}`);
@@ -72,13 +75,13 @@ wss.on('connection', async (ws) => {
         const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
         let guideline = "You are a AI Customer Service. Keep your responses concise and natural.";
         
-        const isGoodbyeResponse = await OpenAIService.isGoodbye(userMessage);
+        const isGoodbyeResponse = await llmService.isGoodbye(userMessage);
         if (isGoodbyeResponse) {
             guideline = "You are a helpful AI Customer Service. Keep your responses concise and natural. The user wants to end the conversation.";
         }
 
         try {
-            const intentHandlingResult = await OpenAIService.detectIntentAndHandle(userMessage, phoneNumber);
+            const intentHandlingResult = await llmService.detectIntentAndHandle(userMessage, phoneNumber);
             console.log("Intent Handling Result:", intentHandlingResult);
 
             let aiResponse;
@@ -95,7 +98,7 @@ wss.on('connection', async (ws) => {
                     aiResponse = appointmentResult.message;
                 }
             } else {
-                aiResponse = await OpenAIService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+                aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
             }
 
             console.log(`AI: ${aiResponse}`);
@@ -113,7 +116,7 @@ wss.on('connection', async (ws) => {
             });
         } catch (error) {
             console.error('Error handling intent:', error);
-            const aiResponse = await OpenAIService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+            const aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
             console.log(`AI: ${aiResponse}`);
             conversationLog.push({ role: 'AI', content: aiResponse });
             const mediaMessage = await getTwilioMessage(aiResponse, streamSid);
@@ -150,7 +153,7 @@ wss.on('connection', async (ws) => {
                     The caller maybe is new customer. You should ask for their name.`;
                 }
                 
-                const welcomeMessage = await OpenAIService.getResponse(guideline);
+                const welcomeMessage = await llmService.getResponse(guideline);
                 console.log(`AI: ${welcomeMessage}`);
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });
                 ws.send(await getTwilioMessage(welcomeMessage, streamSid));
