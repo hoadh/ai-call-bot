@@ -6,6 +6,11 @@ import { RealtimeTranscriber } from 'assemblyai';
 import { OpenAI } from 'openai';
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
+import  twilio from "twilio";
+const { validateRequestWithBody } = twilio;
+import { detectIntentByFunction } from "./intentDetection.js";
+import { detectIntentAndHandle } from "./intentHandling.js";
+import { getCustomerInfo } from './crmAPI.js';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -31,10 +36,22 @@ app.post('/', async (req, res) => {
     );
 });
 
+app.post("/twilio-redirect", (req, res) => {
+    console.log("📞 Call transfer triggered");
+
+    res.set("Content-Type", "text/xml");
+    res.send(`
+        <Response>
+            <Dial>+84778980113</Dial>
+        </Response>
+    `);
+});
+
 // the WebSocket server for the Twilio media stream to connect to.
 const wss = new WebSocketServer({ server });
 wss.on('connection', async (ws) => {
     let streamSid = null;
+    let phoneNumber = null;
     let conversationLog = []; // Initialize conversation log for the call
     console.log('Twilio media stream WebSocket connected');
     const transcriber = new RealtimeTranscriber({
@@ -53,19 +70,29 @@ wss.on('connection', async (ws) => {
         console.clear();
         const userMessage = finalTranscript.text;
 
+        const intent = await detectIntentByFunction(userMessage);
+        console.log("Detected Intent:", intent);
+        // if (shouldTransferCall(userMessage)) {
+        //     console.log("🔄 Transferring call to human agent...");
+        //     ws.send(JSON.stringify({ event: "stop" })); // Instruct Twilio to stop streaming
+        // }
+
         // Log user input
         console.log(`User: ${userMessage}`);
         conversationLog.push({ role: 'user', content: userMessage });
 
         // Get history of conversation
         const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
-        let guideline = "You are a helpful AI assistant. Keep your responses concise and natural.";
+        let guideline = "You are a AI Customer Service. Keep your responses concise and natural.";
         
         // Use OpenAI to detect if the user wants to say goodbye
         const isGoodbyeResponse = await isGoodbye(userMessage);
         if (isGoodbyeResponse) {
-            guideline = "You are a helpful AI assistant. Keep your responses concise and natural. The user wants to end the conversation.";
+            guideline = "You are a helpful AI Customer Service. Keep your responses concise and natural. The user wants to end the conversation.";
         }
+
+        // let result = await detectIntentAndHandle(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+        // console.log("Intent Handling Result:", result);
 
         const aiResponse = await getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
         console.log(`AI: ${aiResponse}`);
@@ -97,9 +124,21 @@ wss.on('connection', async (ws) => {
                 console.info('Twilio media stream started');
                 streamSid = msg.streamSid;
                 const { customParameters } = msg.start;
-                const callerId = customParameters.caller_id;
+                const callerId = customParameters.caller_id.replace('+', '').replace('client:', '');
                 console.log(`📞 Caller ID: ${callerId}`);
-                const welcomeMessage = `Hello ${callerId}, welcome to the AI assistant.`;
+                phoneNumber = callerId;
+                const customerInfo = await getCustomerInfo(callerId);
+                let guideline = `You are a helpful AI Customer Service. Keep your responses concise and natural.`;
+                if (customerInfo) {
+                    guideline = `You are a AI Customer Service. The phone number is ${callerId}. You should call this customer is ${customerInfo.title} ${customerInfo.nickname}.
+                    Say the welcome message to this customer.`;
+                } else {
+                    console.log(`No customer info found for ${callerId}`);
+                    guideline = `You are a helpful AI Customer Service. Keep your responses concise and natural.
+                    The caller maybe is new customer. You should ask for their name.`;
+                }
+                const welcomeMessage = await getResponse(`${guideline}`);
+                console.log(`AI: ${welcomeMessage}`);
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });
                 ws.send(await getTwilioMessage(welcomeMessage, streamSid));
                 break;
@@ -137,11 +176,11 @@ wss.on('connection', async (ws) => {
 async function getResponse(prompt) {
     // Get AI response from OpenAI
     const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
             {
                 role: "system",
-                content: "You are a helpful AI assistant. Keep your responses concise and natural."
+                content: "You are a helpful Customer Service. Keep your responses concise and natural."
             },
             {
                 role: "user",
@@ -179,9 +218,9 @@ async function getTwilioMessage(text, streamSid) {
 }
 
 async function isGoodbye(text) {
-    const prompt = `Determine if the user wants to end the conversation. Respond with "yes" or "no".\n\nUser: ${text}\nDoes the user want to end the conversation?`;
+    const prompt = `Determine if the user wants to end the conversation. Respond with "yes" or "no" or "not sure".\n\nUser: ${text}\nDoes the user want to end the conversation?`;
     const intentResponse = await getResponse(prompt);
-    console.log(`Intent response: ${intentResponse}`);
+    console.log(`Goodbye response: ${intentResponse}`);
     return intentResponse.trim().toLowerCase() === 'yes'
         || intentResponse.trim().toLowerCase() === 'yes.'
         || intentResponse.trim().toLowerCase().startsWith('yes');
