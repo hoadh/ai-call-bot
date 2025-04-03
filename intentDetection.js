@@ -7,72 +7,6 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
 
-// Function to detect intent
-// export async function detectIntent(userMessage) {
-//     const prompt = `Identify the intent of the following customer message related to a nail salon: 
-
-//     ${userMessage}
-
-//     Choose one of the following intents: 
-//     - Book Appointment
-//     - Reschedule Appointment
-//     - Cancel Appointment
-//     - Confirm Appointment
-//     - Check Availability
-//     - Walk-in Inquiry
-//     - Ask About Services
-//     - Ask About Pricing
-//     - Package Deals Inquiry
-//     - Custom Design Request
-//     - Nail Design Request
-//     - Nail Shape Preferences
-//     - Allergy or Sensitivity Concern
-//     - Specific Nail Technician Request
-//     - Ask About Discounts
-//     - Loyalty Program Inquiry
-//     - Gift Card Purchase
-//     - Ask for Address
-//     - Ask for Directions
-//     - Ask for Business Hours
-//     - File a Complaint
-//     - Leave a Review
-//     - Report a Billing Issue
-//     - Ask About Cancellation Policy
-//     - Ask About Payment Methods
-//     - Ask About Hygiene & Safety
-//     - Speak to a Human
-//     - Emergency Request
-
-//     Intent:`;
-
-//     try {
-//         const response = await openai.chat.completions.create({
-//             model: "gpt-4-turbo",
-//             messages: [
-//                 {
-//                     role: "system",
-//                     content: "You are an AI assistant for a nail salon."
-//                 },
-//                 {
-//                     role: "user",
-//                     content: prompt
-//                 }
-//             ],
-//             max_tokens: 50,
-//             temperature: 0.2,
-//         });
-
-//         const intent = response.choices[0].message.content.trim();
-//         return intent;
-//     } catch (error) {
-//         console.error("Error detecting intent:", error);
-//         return "Unknown Intent";
-//     }
-// }
-
-
-////////////
-
 const functions = [
     {
         name: "detect_nail_salon_intent",
@@ -95,14 +29,32 @@ const functions = [
                         "Ask_About_Hygiene_and_Safety", "Speak_to_a_Human", "Emergency_Request"
                     ],
                     description: "The detected intent of the customer's message."
-                }
+                },
+                attendees: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "List of people attending the appointment.",
+                },
+                date: {
+                    type: "string",
+                    description: "Date of the appointment (e.g., 'yyyy-mm-dd')",
+                },
+                time: {
+                    type: "string",
+                    description: "Time of the appointment (e.g., '15:00')",
+                },
+                topic: {
+                    type: "string",
+                    description: "The purpose of the appointment (e.g., 'Nail extension')",
+                },
             },
-            required: ["intent"]
+            required: ["intent"], // Không bắt buộc date, time nếu khách chưa cung cấp
         }
     }
 ];
 
 export async function detectIntentByFunction(userMessage) {
+    console.log("userMessage", userMessage);
     const response = await openai.chat.completions.create({
         model: "gpt-4-turbo",
         messages: [{ role: "user", content: userMessage }],
@@ -112,8 +64,12 @@ export async function detectIntentByFunction(userMessage) {
 
     const functionResponse = response.choices[0].message.function_call;
     if (functionResponse) {
+        const args = JSON.parse(functionResponse.arguments);
+        console.log(" args", JSON.stringify(args));
         const { intent } = JSON.parse(functionResponse.arguments);
+        console.log(" Intent in IntentDetection", JSON.stringify(intent));
         return intent;
     }
     return "Unknown_Intent"; // Fallback if no intent detected
 }
+
