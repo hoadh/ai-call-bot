@@ -8,7 +8,7 @@ import { convertToMulaw } from "./convert.js";
 import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
 import { LanguageService } from './services/language/LanguageService.js';
-import configService from './services/config/ConfigService.js';
+// import configService from './services/config/ConfigService.js';
 import { getCustomerInfo } from './crmAPI.js';
 
 const app = express();
@@ -18,10 +18,10 @@ const server = createServer(app);
 // Initialize services
 async function initializeServices() {
     try {
-        await configService.initialize();
-        console.log('✅ Configuration loaded successfully');
+        // Configuration is loaded on-demand, no initialization needed
+        console.log('✅ Configuration service ready');
     } catch (error) {
-        console.error('❌ Error initializing configuration:', error);
+        console.error('❌ Error initializing services:', error);
         process.exit(1);
     }
 }
@@ -34,8 +34,13 @@ app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'
 
 app.post('/', async (req, res) => {
     const callerNumber = req.body.From;
-    const phoneNumberSid = req.body.To; // Get the Twilio Phone Number SID
+    console.log(`req.body: ${JSON.stringify(req.body)}`);
+    const phoneNumberSid = req.body.To || "PN123456789"; // Get the Twilio Phone Number SID
+    if (phoneNumberSid === "") {
+        phoneNumberSid = "PN123456789";
+    }
     console.log(`📞 Incoming call from: ${callerNumber} to: ${phoneNumberSid}`);
+    console.log(`📞 phoneNumberSid: ${phoneNumberSid}`);
     res.type('xml').send(
         `<Response>
         <Connect>
@@ -243,9 +248,6 @@ async function startServer() {
     await initializeServices();
     server.listen(8000, () => {
         console.log('🚀 Server is listening on port 8000');
-        console.log(`📞 Business ID: ${process.env.BUSINESS_ID}`);
-        console.log(`🏢 Business Name: ${configService.getBusinessName()}`);
-        console.log(`🌍 Supported Languages: ${configService.getSupportedLanguages().join(', ')}`);
     });
 }
 

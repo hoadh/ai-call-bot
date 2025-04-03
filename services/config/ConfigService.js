@@ -3,7 +3,7 @@ import axios from 'axios';
 class ConfigService {
     constructor() {
         this.configs = new Map(); // Store configs for different phone numbers
-        this.apiBaseUrl = process.env.CONFIG_API_BASE_URL;
+        this.apiBaseUrl = process.env.INTERNAL_BACKEND_API_URL;
     }
 
     async loadConfig(phoneNumberSid) {
@@ -45,16 +45,17 @@ class ConfigService {
 
     getConfig(phoneNumberSid) {
         const config = this.configs.get(phoneNumberSid);
+        // console.log(`📞 config: ${JSON.stringify(config)}`);
         return config?.data;
     }
 
     // Basic business info
-    getBusinessName(phoneNumberSid) {
-        return this.getConfig(phoneNumberSid)?.businessInfo?.name;
+    getBusinessName(phoneNumberSid, language = 'en') {
+        return this.getConfig(phoneNumberSid)?.businessInfo?.name?.[language];
     }
 
-    getBusinessAddress(phoneNumberSid) {
-        return this.getConfig(phoneNumberSid)?.businessInfo?.address;
+    getBusinessAddress(phoneNumberSid, language = 'en') {
+        return this.getConfig(phoneNumberSid)?.businessInfo?.address?.[language];
     }
 
     getBusinessPhone(phoneNumberSid) {
@@ -89,15 +90,15 @@ class ConfigService {
 
     // Business-specific prompts
     getWelcomePrompt(phoneNumberSid, language = 'en') {
-        return this.getConfig(phoneNumberSid)?.prompts?.[language]?.welcome;
+        return this.getConfig(phoneNumberSid)?.prompts?.welcome?.[language];
     }
 
     getSystemPrompt(phoneNumberSid, language = 'en') {
-        return this.getConfig(phoneNumberSid)?.prompts?.[language]?.system;
+        return this.getConfig(phoneNumberSid)?.prompts?.system?.[language];
     }
 
     getGoodbyePrompt(phoneNumberSid, language = 'en') {
-        return this.getConfig(phoneNumberSid)?.prompts?.[language]?.goodbye;
+        return this.getConfig(phoneNumberSid)?.prompts?.goodbye?.[language];
     }
 
     // Transfer settings

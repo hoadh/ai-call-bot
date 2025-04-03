@@ -1,9 +1,10 @@
-import { GoogleCloudTranslation } from '@google-cloud/translate';
+import pkg from '@google-cloud/translate';
+const { TranslationServiceClient } = pkg;
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const translate = new GoogleCloudTranslation.TranslationServiceClient({
+const translate = new TranslationServiceClient({
     keyFilename: process.env.GOOGLE_TRANSLATE_KEY_PATH
 });
 
