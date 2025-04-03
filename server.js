@@ -35,12 +35,13 @@ app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'
 app.post('/', async (req, res) => {
     const callerNumber = req.body.From;
     console.log(`req.body: ${JSON.stringify(req.body)}`);
-    const phoneNumberSid = req.body.To || "PN123456789"; // Get the Twilio Phone Number SID
+
+    // For testing purposes, we use a fixed phone number SID (in case To is not provided)
+    const phoneNumberSid = req.body.To || "TEST123456789"; // Get the Twilio Phone Number SID
     if (phoneNumberSid === "") {
-        phoneNumberSid = "PN123456789";
+        phoneNumberSid = "TEST123456789";
     }
     console.log(`📞 Incoming call from: ${callerNumber} to: ${phoneNumberSid}`);
-    console.log(`📞 phoneNumberSid: ${phoneNumberSid}`);
     res.type('xml').send(
         `<Response>
         <Connect>
