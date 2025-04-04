@@ -86,8 +86,11 @@ export class OpenAIService extends BaseLLMService {
     async detectIntentAndHandle(userMessage, phoneNumber) {
         const messages = [{ role: "user", content: userMessage }];
         if (phoneNumber) {
-            messages.push({ role: "user", content: `The phone number of the customer is ${phoneNumber}.` });
+            messages.push({ role: "system", content: `The phone number of the customer is ${phoneNumber}.` });
         }
+
+        // Add the current date to the messages
+        messages.push({ role: "system", content: `Today is ${new Date().toISOString().split('T')[0]}.` });
 
         const response = await openai.chat.completions.create({
             model: "gpt-4-turbo",
