@@ -3,13 +3,21 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import 'dotenv/config';
 import { RealtimeTranscriber } from 'assemblyai';
-import { OpenAI } from 'openai';
 import { synthesizeSpeech } from "./tts.js";
 import { convertToMulaw } from "./convert.js";
 
+import twilio from 'twilio';
+import pkg from 'twilio';
+const { twiml: Twiml } = pkg;
+
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const client = twilio(accountSid, authToken);
+
 // Initialize OpenAI client
+import { OpenAI } from 'openai';
 const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
+    apiKey: process.env.OPENAI_API_KEYl
 });
 
 const app = express();
@@ -19,22 +27,41 @@ app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'
 // Tell Twilio to say something and then establish a media stream with the WebSocket server
 app.post('/', async (req, res) => {
     const callerNumber = req.body.From;
+    const callSid = req.body.CallSid;
+    const host = req.headers.host;
     console.log(`📞 Incoming call from: ${callerNumber}`);
     res.type('xml').send(
         `<Response>
         <Connect>
           <Stream url='wss://${req.headers.host}'>
             <Parameter name="caller_id" value="${callerNumber}"/>
+            <Parameter name="call_sid" value="${callSid}"/>
+            <Parameter name="host" value="${host}"/>
           </Stream>
         </Connect>
       </Response>`
     );
 });
 
+
+// Forward endpoint
+app.post('/forward', (req, res) => {
+    const response = new Twiml.VoiceResponse();
+  
+    // Replace with the phone number you want to forward the call to
+    response.dial('+84778980113');
+  
+    res.type('text/xml');
+    res.send(response.toString());
+});
+  
+
 // the WebSocket server for the Twilio media stream to connect to.
 const wss = new WebSocketServer({ server });
 wss.on('connection', async (ws) => {
     let streamSid = null;
+    let callSid = null;
+    let host = null;
     let conversationLog = []; // Initialize conversation log for the call
     console.log('Twilio media stream WebSocket connected');
     const transcriber = new RealtimeTranscriber({
@@ -65,6 +92,16 @@ wss.on('connection', async (ws) => {
         const isGoodbyeResponse = await isGoodbye(userMessage);
         if (isGoodbyeResponse) {
             guideline = "You are a helpful AI assistant. Keep your responses concise and natural. The user wants to end the conversation.";
+        }
+
+        // Forward the call to the next available agent
+        if (userMessage.toLowerCase().includes("human")) {
+            console.log(`Forwarding call to: ${host}/forward`);
+            const forwardResponse = await client.calls(callSid).update({
+                url: `https://${host}/forward`
+            });
+            console.log(`Forwarded call to: ${JSON.stringify(forwardResponse)}`);
+            return;
         }
 
         const aiResponse = await getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
@@ -98,7 +135,11 @@ wss.on('connection', async (ws) => {
                 streamSid = msg.streamSid;
                 const { customParameters } = msg.start;
                 const callerId = customParameters.caller_id;
+                callSid = customParameters.call_sid;
+                host = customParameters.host;
                 console.log(`📞 Caller ID: ${callerId}`);
+                console.log(`📞 Call SID: ${callSid}`);
+                console.log(`📞 Host: ${host}`);
                 const welcomeMessage = `Hello ${callerId}, welcome to the AI assistant.`;
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });
                 ws.send(await getTwilioMessage(welcomeMessage, streamSid));
