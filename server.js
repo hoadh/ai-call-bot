@@ -22,10 +22,15 @@ async function initializeServices() {
         // Initialize the DI container
         BusinessServiceFactory.initialize();
         
+        // Create language service
+        const languageService = new LanguageService();
+        
+        // Initialize LLM services with language service
+        LLMServiceFactory.initialize(languageService);
+        
         // Create services through DI
         const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
         const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
-        const languageService = new LanguageService();
 
         return { llmService, businessService, languageService };
     } catch (error) {

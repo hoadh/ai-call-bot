@@ -4,30 +4,36 @@ export class Container {
         this.instances = new Map();
     }
 
-    register(name, service, dependencies = []) {
-        this.services.set(name, { service, dependencies });
+    register(serviceName, serviceClass, dependencies = []) {
+        this.services.set(serviceName, {
+            class: serviceClass,
+            dependencies: dependencies
+        });
     }
 
-    get(name) {
+    get(serviceName) {
         // Return existing instance if available
-        if (this.instances.has(name)) {
-            return this.instances.get(name);
+        if (this.instances.has(serviceName)) {
+            return this.instances.get(serviceName);
         }
 
-        // Create new instance if not exists
-        const serviceInfo = this.services.get(name);
+        // Get service info
+        const serviceInfo = this.services.get(serviceName);
         if (!serviceInfo) {
-            throw new Error(`Service ${name} not registered`);
+            throw new Error(`Service ${serviceName} not found`);
         }
 
         // Resolve dependencies
-        const dependencies = serviceInfo.dependencies.map(dep => this.get(dep));
-        
-        // Create instance with dependencies
-        const instance = new serviceInfo.service(...dependencies);
-        this.instances.set(name, instance);
-        
+        const resolvedDependencies = serviceInfo.dependencies.map(dep => this.get(dep));
+
+        // Create new instance with dependencies
+        const instance = new serviceInfo.class(...resolvedDependencies);
+        this.instances.set(serviceName, instance);
         return instance;
+    }
+
+    has(serviceName) {
+        return this.services.has(serviceName);
     }
 
     // Clear all instances (useful for testing)

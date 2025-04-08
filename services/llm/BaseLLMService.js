@@ -1,8 +1,9 @@
 export class BaseLLMService {
-    constructor() {
+    constructor(languageService) {
         if (this.constructor === BaseLLMService) {
             throw new Error("Abstract class cannot be instantiated");
         }
+        this.languageService = languageService;
     }
 
     async detectIntent(userMessage) {
