@@ -1,6 +1,4 @@
-export class BusinessService {
-    // ... existing code ...
-
+export class CustomerService {
     async getCustomerInfo(phoneNumber) {
         const url = `${process.env.INTERNAL_BACKEND_API_URL}/customers/phone/${phoneNumber}`;
         console.log("Fetching customer info from:", url);
@@ -20,6 +18,6 @@ export class BusinessService {
             throw new Error('Network response was not ok');
         }
         console.log('Customer data:', responseBody);
-        return responseBody;
+        return JSON.parse(responseBody);  // Parse the response since we need to access _id
     }
 } 

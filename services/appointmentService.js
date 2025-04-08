@@ -1,14 +1,18 @@
 import axios from "axios";
-import { BusinessServiceFactory } from './business/BusinessServiceFactory.js';
+import { CustomerService } from './customer/CustomerService.js';
 
 export class AppointmentService {
+    constructor() {
+        this.customerService = new CustomerService();
+    }
+
     static async handleAppointment(action, phoneNumber, appointmentTime) {
         let apiUrl = `${process.env.INTERNAL_BACKEND_API_URL}/booking`;
         let requestData = { customer: null };
         
         if (phoneNumber) {
-            const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
-            const customerInfo = await businessService.getCustomerInfo(phoneNumber);
+            const customerService = new CustomerService();
+            const customerInfo = await customerService.getCustomerInfo(phoneNumber);
             if (customerInfo) {
                 requestData.customer = customerInfo._id;
             } else {

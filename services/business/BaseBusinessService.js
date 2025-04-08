@@ -1,4 +1,5 @@
 import { LanguageService } from '../language/LanguageService.js';
+import { CustomerService } from '../customer/CustomerService.js';
 
 export class BaseBusinessService {
     constructor() {
@@ -6,6 +7,7 @@ export class BaseBusinessService {
             throw new Error("Abstract class cannot be instantiated");
         }
         this.languageService = new LanguageService();
+        this.customerService = new CustomerService();
     }
 
     async handleIntent(intent, userMessage, phoneNumber, customerInfo, language = 'en') {
@@ -33,5 +35,9 @@ export class BaseBusinessService {
 
     getTransferNumber(phoneNumberSid) {
         throw new Error("Method 'getTransferNumber' must be implemented");
+    }
+
+    async getCustomerInfo(phoneNumber) {
+        return await this.customerService.getCustomerInfo(phoneNumber);
     }
 } 
