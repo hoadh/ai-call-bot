@@ -9,7 +9,6 @@ import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
 import { LanguageService } from './services/language/LanguageService.js';
 // import configService from './services/config/ConfigService.js';
-import { getCustomerInfo } from './crmAPI.js';
 import twilio from 'twilio';
 
 const app = express();
@@ -199,7 +198,7 @@ wss.on('connection', async (ws) => {
                 console.log(`📱 Phone Number SID: ${phoneNumberSid}`);
                 phoneNumber = callerId;
                 
-                customerInfo = await getCustomerInfo(callerId);
+                customerInfo = await businessService.getCustomerInfo(callerId);
                 const welcomeMessage = await businessService.getWelcomeMessage(customerInfo, currentLanguage, phoneNumberSid);
                 console.log(`AI: ${welcomeMessage}`);
                 conversationLog.push({ role: 'assistant', content: welcomeMessage });

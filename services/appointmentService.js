@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getCustomerInfo } from '../crmAPI.js';
+import { BusinessServiceFactory } from './business/BusinessServiceFactory.js';
 
 export class AppointmentService {
     static async handleAppointment(action, phoneNumber, appointmentTime) {
@@ -7,7 +7,8 @@ export class AppointmentService {
         let requestData = { customer: null };
         
         if (phoneNumber) {
-            const customerInfo = await getCustomerInfo(phoneNumber);
+            const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
+            const customerInfo = await businessService.getCustomerInfo(phoneNumber);
             if (customerInfo) {
                 requestData.customer = customerInfo._id;
             } else {
