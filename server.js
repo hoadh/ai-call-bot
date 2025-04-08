@@ -18,17 +18,22 @@ const server = createServer(app);
 // Initialize services
 async function initializeServices() {
     try {
-        // Configuration is loaded on-demand, no initialization needed
-        console.log('✅ Configuration service ready');
+        // Initialize the DI container
+        BusinessServiceFactory.initialize();
+        
+        // Create services through DI
+        const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
+        const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
+        const languageService = new LanguageService();
+
+        return { llmService, businessService, languageService };
     } catch (error) {
         console.error('❌ Error initializing services:', error);
         process.exit(1);
     }
 }
 
-const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
-const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
-const languageService = new LanguageService();
+const { llmService, businessService, languageService } = await initializeServices();
 
 app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'));
 

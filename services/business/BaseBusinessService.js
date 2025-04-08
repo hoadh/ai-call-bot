@@ -2,12 +2,12 @@ import { LanguageService } from '../language/LanguageService.js';
 import { CustomerService } from '../customer/CustomerService.js';
 
 export class BaseBusinessService {
-    constructor() {
+    constructor(languageService, customerService) {
         if (this.constructor === BaseBusinessService) {
             throw new Error("Abstract class cannot be instantiated");
         }
-        this.languageService = new LanguageService();
-        this.customerService = new CustomerService();
+        this.languageService = languageService;
+        this.customerService = customerService;
     }
 
     async handleIntent(intent, userMessage, phoneNumber, customerInfo, language = 'en') {

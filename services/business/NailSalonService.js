@@ -3,9 +3,9 @@ import configService from '../config/ConfigService.js';
 import { AppointmentService } from '../appointmentService.js';
 
 export class NailSalonService extends BaseBusinessService {
-    constructor() {
-        super();
-        this.appointmentService = new AppointmentService();
+    constructor(languageService, customerService, appointmentService) {
+        super(languageService, customerService);
+        this.appointmentService = appointmentService;
     }
 
     async handleIntent(intent, userMessage, phoneNumber, customerInfo, language = 'en', phoneNumberSid) {
