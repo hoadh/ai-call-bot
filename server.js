@@ -10,6 +10,7 @@ import { BusinessServiceFactory } from './services/business/BusinessServiceFacto
 import { LanguageService } from './services/language/LanguageService.js';
 import { errorHandler, wsErrorHandler } from './middleware/errorHandler.js';
 import { ServiceError, ExternalServiceError } from './services/error/AppError.js';
+import { ConversationService } from './services/conversation/ConversationService.js';
 import twilio from 'twilio';
 
 const app = express();
@@ -34,8 +35,9 @@ async function initializeServices() {
         // Create services through DI
         const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai');
         const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon');
+        const conversationService = new ConversationService();
 
-        return { llmService, businessService, languageService };
+        return { llmService, businessService, languageService, conversationService };
     } catch (error) {
         throw new ServiceError('Initialization', `Failed to initialize services: ${error.message}`);
     }
@@ -44,7 +46,7 @@ async function initializeServices() {
 // Error handling middleware
 app.use(errorHandler);
 
-const { llmService, businessService, languageService } = await initializeServices();
+const { llmService, businessService, languageService, conversationService } = await initializeServices();
 
 app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'));
 
@@ -229,15 +231,10 @@ wss.on('connection', async (ws) => {
             console.log('Twilio media stream WebSocket disconnected');
             await transcriber.close();
 
-            const fs = await import('fs/promises');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `conversation-${streamSid || 'unknown'}-${timestamp}.json`;
-
             try {
-                await fs.writeFile(`./conversations/${filename}`, JSON.stringify(conversationLog, null, 2));
-                console.log(`💾 Conversation saved to ./conversations/${filename}`);
+                await conversationService.saveConversation(conversationLog, streamSid);
             } catch (error) {
-                wsErrorHandler(new ServiceError('FileSystem', `Error saving conversation: ${error.message}`), ws);
+                wsErrorHandler(error, ws);
             }
         });
 
