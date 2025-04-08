@@ -5,13 +5,15 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const translate = new TranslationServiceClient({
-    keyFilename: process.env.GOOGLE_TRANSLATE_KEY_PATH
+    keyFilename: process.env.GOOGLE_TRANSLATE_KEY_PATH,
+    projectId: process.env.GOOGLE_CLOUD_PROJECT_ID
 });
 
 export class LanguageService {
     constructor() {
         this.defaultLanguage = 'en';
         this.supportedLanguages = ['en', 'vi', 'ja', 'ko', 'zh', 'es', 'fr', 'de'];
+        this.projectLocation = process.env.GOOGLE_CLOUD_PROJECT_LOCATION || 'global';
     }
 
     async detectLanguage(text) {
@@ -19,6 +21,7 @@ export class LanguageService {
             const [result] = await translate.detectLanguage({
                 content: text,
                 mimeType: 'text/plain',
+                parent: `projects/${process.env.GOOGLE_CLOUD_PROJECT_ID}/locations/${this.projectLocation}`
             });
 
             const detectedLanguage = result.languages[0].languageCode;
@@ -40,6 +43,7 @@ export class LanguageService {
                 mimeType: 'text/plain',
                 sourceLanguageCode: this.defaultLanguage,
                 targetLanguageCode: targetLanguage,
+                parent: `projects/${process.env.GOOGLE_CLOUD_PROJECT_ID}/locations/${this.projectLocation}`
             });
 
             return translation.translations[0].translatedText;

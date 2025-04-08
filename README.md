@@ -1,7 +1,7 @@
 
 ```
 cp .env.example .env
-export GOOGLE_APPLICATION_CREDENTIALS="google-tts-key.json"
+export GOOGLE_APPLICATION_CREDENTIALS="google-cloud-key.json"
 node server.js
 ```
 
@@ -10,6 +10,6 @@ node server.js
 
 ```
 cp cp .env.example .env.test
-export GOOGLE_APPLICATION_CREDENTIALS="google-tts-key.json"
+export GOOGLE_APPLICATION_CREDENTIALS="google-cloud-key.json"
 npm test
 ```
