@@ -1,6 +1,7 @@
 node_modules
 conversations
 .env
+.env.test
 *.json
 .DS_Store
 coverage/*
