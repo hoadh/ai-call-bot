@@ -57,6 +57,7 @@ export class NailSalonService extends BaseBusinessService {
                 };
 
             case 'Transfer_To_Human':
+            case 'Speak_to_a_Human':
                 return {
                     response: await this.getTransferMessage(language, phoneNumberSid),
                     shouldTransfer: true
@@ -152,5 +153,9 @@ export class NailSalonService extends BaseBusinessService {
         return language === 'en'
             ? `I'll transfer you to our staff at ${transferNumber} for further assistance.`
             : `Tôi sẽ chuyển bạn đến nhân viên của chúng tôi theo số ${transferNumber} để được hỗ trợ thêm.`;
+    }
+
+    getTransferNumber(phoneNumberSid) {
+        return configService.getTransferPhoneNumber(phoneNumberSid);
     }
 } 

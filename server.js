@@ -10,6 +10,7 @@ import { BusinessServiceFactory } from './services/business/BusinessServiceFacto
 import { LanguageService } from './services/language/LanguageService.js';
 // import configService from './services/config/ConfigService.js';
 import { getCustomerInfo } from './crmAPI.js';
+import twilio from 'twilio';
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -34,6 +35,8 @@ app.get('/', (_, res) => res.type('text').send('Twilio media stream transcriber'
 
 app.post('/', async (req, res) => {
     const callerNumber = req.body.From;
+    const callSid = req.body.CallSid;
+    const host = req.headers.host;
     console.log(`req.body: ${JSON.stringify(req.body)}`);
 
     // For testing purposes, we use a fixed phone number SID (in case To is not provided)
@@ -45,21 +48,24 @@ app.post('/', async (req, res) => {
     res.type('xml').send(
         `<Response>
         <Connect>
-          <Stream url='wss://${req.headers.host}'>
+          <Stream url='wss://${host}'>
             <Parameter name="caller_id" value="${callerNumber}"/>
             <Parameter name="phone_number_sid" value="${phoneNumberSid}"/>
+            <Parameter name="call_sid" value="${callSid}"/>
+            <Parameter name="host" value="${host}"/>
           </Stream>
         </Connect>
       </Response>`
     );
 });
 
-app.post("/twilio-redirect", (req, res) => {
+app.post("/forward", (req, res) => {
+    const transferTo = req.query.transferTo;
     console.log("📞 Call transfer triggered");
     res.set("Content-Type", "text/xml");
     res.send(`
         <Response>
-            <Dial>+84778980113</Dial>
+            <Dial>${transferTo}</Dial>
         </Response>
     `);
 });
@@ -72,6 +78,8 @@ wss.on('connection', async (ws) => {
     let conversationLog = [];
     let customerInfo = null;
     let currentLanguage = 'en';
+    let callSid = null;
+    let host = null;
     console.log('Twilio media stream WebSocket connected');
     
     const transcriber = new RealtimeTranscriber({
@@ -126,7 +134,8 @@ wss.on('connection', async (ws) => {
 
                 if (businessResult.shouldTransfer) {
                     console.log("🔄 Transferring call to human agent...");
-                    ws.send(JSON.stringify({ event: "stop" }));
+                    const transferNumber = businessService.getTransferNumber(phoneNumberSid);
+                    await forwardCall(callSid, host, transferNumber);
                     return;
                 }
 
@@ -184,6 +193,8 @@ wss.on('connection', async (ws) => {
                 const { customParameters } = msg.start;
                 const callerId = customParameters.caller_id.replace('+', '').replace('client:', '');
                 phoneNumberSid = customParameters.phone_number_sid;
+                callSid = customParameters.call_sid;
+                host = customParameters.host;
                 console.log(`📞 Caller ID: ${callerId}`);
                 console.log(`📱 Phone Number SID: ${phoneNumberSid}`);
                 phoneNumber = callerId;
@@ -250,6 +261,18 @@ async function startServer() {
     server.listen(8000, () => {
         console.log('🚀 Server is listening on port 8000');
     });
+}
+
+// Forward the call to the next available agent
+async function forwardCall(callSid, host, transferTo) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const twilioClient = twilio(accountSid, authToken);
+    const forwardResponse = await twilioClient.calls(callSid).update({
+        url: `https://${host}/forward?transferTo=${transferTo}`
+    });
+    console.log(`Forwarded call to: ${JSON.stringify(forwardResponse)}`);
+    return forwardResponse;
 }
 
 startServer().catch(error => {

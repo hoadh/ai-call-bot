@@ -30,4 +30,8 @@ export class BaseBusinessService {
         }
         return await this.languageService.translate(response, language);
     }
+
+    getTransferNumber(phoneNumberSid) {
+        throw new Error("Method 'getTransferNumber' must be implemented");
+    }
 } 
