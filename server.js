@@ -16,6 +16,9 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
 
+// Define test SID in a constant or load from environment
+const TEST_PHONE_NUMBER_SID = process.env.TEST_PHONE_NUMBER_SID || "TEST123456789";
+
 // Initialize services
 async function initializeServices() {
     try {
@@ -51,11 +54,8 @@ app.post('/', async (req, res) => {
     const host = req.headers.host;
     console.log(`req.body: ${JSON.stringify(req.body)}`);
 
-    // For testing purposes, we use a fixed phone number SID (in case To is not provided)
-    const phoneNumberSid = req.body.To || "TEST123456789"; // Get the Twilio Phone Number SID
-    if (phoneNumberSid === "") {
-        phoneNumberSid = "TEST123456789";
-    }
+    // Use nullish coalescing to handle both undefined and empty string cases
+    const phoneNumberSid = req.body.To?.trim() || TEST_PHONE_NUMBER_SID;
     console.log(`📞 Incoming call from: ${callerNumber} to: ${phoneNumberSid}`);
     res.type('xml').send(
         `<Response>
