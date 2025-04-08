@@ -8,7 +8,8 @@ import { convertToMulaw } from "./convert.js";
 import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
 import { LanguageService } from './services/language/LanguageService.js';
-// import configService from './services/config/ConfigService.js';
+import { errorHandler, wsErrorHandler } from './middleware/errorHandler.js';
+import { ServiceError, ExternalServiceError } from './services/error/AppError.js';
 import twilio from 'twilio';
 
 const app = express();
@@ -28,10 +29,12 @@ async function initializeServices() {
 
         return { llmService, businessService, languageService };
     } catch (error) {
-        console.error('❌ Error initializing services:', error);
-        process.exit(1);
+        throw new ServiceError('Initialization', `Failed to initialize services: ${error.message}`);
     }
 }
+
+// Error handling middleware
+app.use(errorHandler);
 
 const { llmService, businessService, languageService } = await initializeServices();
 
@@ -84,6 +87,7 @@ wss.on('connection', async (ws) => {
     let currentLanguage = 'en';
     let callSid = null;
     let host = null;
+    
     console.log('Twilio media stream WebSocket connected');
     
     const transcriber = new RealtimeTranscriber({
@@ -92,150 +96,150 @@ wss.on('connection', async (ws) => {
         sampleRate: 8000
     });
 
-    const transcriberConnectionPromise = transcriber.connect();
-    
-    transcriber.on('transcript.partial', (partialTranscript) => {
-        if (!partialTranscript.text) return;
-        console.log(partialTranscript.text + "\n");
-    });
-
-    transcriber.on('transcript.final', async (finalTranscript) => {
-        console.clear();
-        const userMessage = finalTranscript.text;
-
-        // Detect language from user message
-        currentLanguage = await languageService.detectLanguage(userMessage);
-        console.log("Detected Language:", currentLanguage);
-
-        const intent = await llmService.detectIntent(userMessage);
-        console.log("Detected Intent:", intent);
-
-        console.log(`User: ${userMessage}`);
-        conversationLog.push({ role: 'user', content: userMessage });
-
-        const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
-        let guideline = await businessService.getSystemPrompt(currentLanguage, phoneNumberSid);
+    try {
+        const transcriberConnectionPromise = transcriber.connect();
         
-        const isGoodbyeResponse = await llmService.isGoodbye(userMessage);
-        if (isGoodbyeResponse) {
-            guideline = await businessService.getGoodbyePrompt(currentLanguage, phoneNumberSid);
-        }
+        transcriber.on('transcript.partial', (partialTranscript) => {
+            if (!partialTranscript.text) return;
+            console.log(partialTranscript.text + "\n");
+        });
 
-        try {
-            const intentHandlingResult = await llmService.detectIntentAndHandle(userMessage, phoneNumber);
-            console.log("Intent Handling Result:", intentHandlingResult);
+        transcriber.on('transcript.final', async (finalTranscript) => {
+            try {
+                console.clear();
+                const userMessage = finalTranscript.text;
 
-            let aiResponse;
-            if (intentHandlingResult !== "No action required.") {
-                const businessResult = await businessService.handleIntent(
-                    intent,
-                    userMessage,
-                    phoneNumber,
-                    customerInfo,
-                    currentLanguage,
-                    phoneNumberSid
-                );
+                // Detect language from user message
+                currentLanguage = await languageService.detectLanguage(userMessage);
+                console.log("Detected Language:", currentLanguage);
 
-                if (businessResult.shouldTransfer) {
-                    console.log("🔄 Transferring call to human agent...");
-                    const transferNumber = businessService.getTransferNumber(phoneNumberSid);
-                    await forwardCall(callSid, host, transferNumber);
-                    return;
-                }
+                const intent = await llmService.detectIntent(userMessage);
+                console.log("Detected Intent:", intent);
 
-                aiResponse = businessResult.response;
-            }
+                console.log(`User: ${userMessage}`);
+                conversationLog.push({ role: 'user', content: userMessage });
 
-            if (!aiResponse) {
-                aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
-                // Translate the AI response if needed
-                if (currentLanguage !== 'en') {
-                    aiResponse = await languageService.translate(aiResponse, currentLanguage);
-                }
-            }
-
-            console.log(`AI: ${aiResponse}`);
-            conversationLog.push({ role: 'AI', content: aiResponse });
-
-            const mediaMessage = await getTwilioMessage(aiResponse, streamSid, currentLanguage);
-            ws.send(mediaMessage, (error) => {
-                if (error) {
-                    console.error('❌ Error sending final message:', error);
-                } else if (isGoodbyeResponse) {
-                    console.log('Final message sent. Closing connection...');
-                    const delay = Math.ceil(2000);
-                    setTimeout(() => ws.close(), delay);
-                }
-            });
-        } catch (error) {
-            console.error('Error handling intent:', error);
-            const aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
-            // Translate the error response if needed
-            if (currentLanguage !== 'en') {
-                aiResponse = await languageService.translate(aiResponse, currentLanguage);
-            }
-            console.log(`AI: ${aiResponse}`);
-            conversationLog.push({ role: 'AI', content: aiResponse });
-            const mediaMessage = await getTwilioMessage(aiResponse, streamSid, currentLanguage);
-            ws.send(mediaMessage);
-        }
-    });
-
-    transcriber.on('open', () => console.log('Connected to real-time service'));
-    transcriber.on('error', console.error);
-    transcriber.on('close', () => console.log('Disconnected from real-time service'));
-
-    ws.on('message', async (message) => {
-        const msg = JSON.parse(message);
-        switch (msg.event) {
-            case 'connected':
-                console.info('Twilio media stream connected');
-                break;
-            case 'start':
-                console.info('Twilio media stream started');
-                streamSid = msg.streamSid;
-                const { customParameters } = msg.start;
-                const callerId = customParameters.caller_id.replace('+', '').replace('client:', '');
-                phoneNumberSid = customParameters.phone_number_sid;
-                callSid = customParameters.call_sid;
-                host = customParameters.host;
-                console.log(`📞 Caller ID: ${callerId}`);
-                console.log(`📱 Phone Number SID: ${phoneNumberSid}`);
-                phoneNumber = callerId;
+                const history = conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\n');
+                let guideline = await businessService.getSystemPrompt(currentLanguage, phoneNumberSid);
                 
-                customerInfo = await businessService.getCustomerInfo(callerId);
-                const welcomeMessage = await businessService.getWelcomeMessage(customerInfo, currentLanguage, phoneNumberSid);
-                console.log(`AI: ${welcomeMessage}`);
-                conversationLog.push({ role: 'assistant', content: welcomeMessage });
-                ws.send(await getTwilioMessage(welcomeMessage, streamSid, currentLanguage));
-                break;
-            case 'media':
-                await transcriberConnectionPromise;
-                transcriber.sendAudio(Buffer.from(msg.media.payload, 'base64'));
-                break;
-            case 'stop':
-                console.info('Twilio media stream stopped');
-                break;
-        }
-    });
+                const isGoodbyeResponse = await llmService.isGoodbye(userMessage);
+                if (isGoodbyeResponse) {
+                    guideline = await businessService.getGoodbyePrompt(currentLanguage, phoneNumberSid);
+                }
 
-    ws.on('close', async () => {
-        console.log('Twilio media stream WebSocket disconnected');
-        await transcriber.close();
+                const intentHandlingResult = await llmService.detectIntentAndHandle(userMessage, phoneNumber);
+                console.log("Intent Handling Result:", intentHandlingResult);
 
-        const fs = await import('fs/promises');
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `conversation-${streamSid || 'unknown'}-${timestamp}.json`;
+                let aiResponse;
+                if (intentHandlingResult !== "No action required.") {
+                    const businessResult = await businessService.handleIntent(
+                        intent,
+                        userMessage,
+                        phoneNumber,
+                        customerInfo,
+                        currentLanguage,
+                        phoneNumberSid
+                    );
 
-        try {
-            await fs.writeFile(`./conversations/${filename}`, JSON.stringify(conversationLog, null, 2));
-            console.log(`💾 Conversation saved to ./conversations/${filename}`);
-        } catch (error) {
-            console.error('❌ Error saving conversation:', error);
-        }
-    });
+                    if (businessResult.shouldTransfer) {
+                        console.log("🔄 Transferring call to human agent...");
+                        const transferNumber = businessService.getTransferNumber(phoneNumberSid);
+                        await forwardCall(callSid, host, transferNumber);
+                        return;
+                    }
 
-    await transcriberConnectionPromise;
+                    aiResponse = businessResult.response;
+                }
+
+                if (!aiResponse) {
+                    aiResponse = await llmService.getResponse(`${guideline}\n\n${history}\nUser: ${userMessage}\nAI:`);
+                    if (currentLanguage !== 'en') {
+                        aiResponse = await languageService.translate(aiResponse, currentLanguage);
+                    }
+                }
+
+                console.log(`AI: ${aiResponse}`);
+                conversationLog.push({ role: 'AI', content: aiResponse });
+
+                const mediaMessage = await getTwilioMessage(aiResponse, streamSid, currentLanguage);
+                ws.send(mediaMessage, (error) => {
+                    if (error) {
+                        throw new ExternalServiceError('WebSocket', `Error sending message: ${error.message}`);
+                    } else if (isGoodbyeResponse) {
+                        console.log('Final message sent. Closing connection...');
+                        const delay = Math.ceil(2000);
+                        setTimeout(() => ws.close(), delay);
+                    }
+                });
+            } catch (error) {
+                wsErrorHandler(error, ws);
+            }
+        });
+
+        transcriber.on('open', () => console.log('Connected to real-time service'));
+        transcriber.on('error', (error) => {
+            wsErrorHandler(new ExternalServiceError('Transcription', error.message), ws);
+        });
+        transcriber.on('close', () => console.log('Disconnected from real-time service'));
+
+        ws.on('message', async (message) => {
+            try {
+                const msg = JSON.parse(message);
+                switch (msg.event) {
+                    case 'connected':
+                        console.info('Twilio media stream connected');
+                        break;
+                    case 'start':
+                        console.info('Twilio media stream started');
+                        streamSid = msg.streamSid;
+                        const { customParameters } = msg.start;
+                        const callerId = customParameters.caller_id.replace('+', '').replace('client:', '');
+                        phoneNumberSid = customParameters.phone_number_sid;
+                        callSid = customParameters.call_sid;
+                        host = customParameters.host;
+                        console.log(`📞 Caller ID: ${callerId}`);
+                        console.log(`📱 Phone Number SID: ${phoneNumberSid}`);
+                        phoneNumber = callerId;
+                        
+                        customerInfo = await businessService.getCustomerInfo(callerId);
+                        const welcomeMessage = await businessService.getWelcomeMessage(customerInfo, currentLanguage, phoneNumberSid);
+                        console.log(`AI: ${welcomeMessage}`);
+                        conversationLog.push({ role: 'assistant', content: welcomeMessage });
+                        ws.send(await getTwilioMessage(welcomeMessage, streamSid, currentLanguage));
+                        break;
+                    case 'media':
+                        await transcriberConnectionPromise;
+                        transcriber.sendAudio(Buffer.from(msg.media.payload, 'base64'));
+                        break;
+                    case 'stop':
+                        console.info('Twilio media stream stopped');
+                        break;
+                }
+            } catch (error) {
+                wsErrorHandler(error, ws);
+            }
+        });
+
+        ws.on('close', async () => {
+            console.log('Twilio media stream WebSocket disconnected');
+            await transcriber.close();
+
+            const fs = await import('fs/promises');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `conversation-${streamSid || 'unknown'}-${timestamp}.json`;
+
+            try {
+                await fs.writeFile(`./conversations/${filename}`, JSON.stringify(conversationLog, null, 2));
+                console.log(`💾 Conversation saved to ./conversations/${filename}`);
+            } catch (error) {
+                wsErrorHandler(new ServiceError('FileSystem', `Error saving conversation: ${error.message}`), ws);
+            }
+        });
+
+        await transcriberConnectionPromise;
+    } catch (error) {
+        wsErrorHandler(error, ws);
+    }
 });
 
 async function getAudioToTwilio(text, language = 'en') {
