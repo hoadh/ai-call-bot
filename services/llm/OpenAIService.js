@@ -7,34 +7,6 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
 
-// Intent detection functions
-const intentHandlingFunctions = [
-    {
-        name: "handle_appointment",
-        description: "Manage nail salon appointments",
-        parameters: {
-            type: "object",
-            properties: {
-                action: {
-                    type: "string",
-                    enum: ["Book_Appointment", "Reschedule_Appointment", "Cancel_Appointment"],
-                    description: "The action to perform on the appointment"
-                },
-                phone_number: {
-                    type: "string",
-                    description: "The phone number of the customer"
-                },
-                appointment_time: {
-                    type: "string",
-                    format: "date-time",
-                    description: "The requested appointment time (ISO 8601 format)"
-                }
-            },
-            required: ["action", "phone_number"]
-        }
-    }
-];
-
 export class OpenAIService extends BaseLLMService {
     constructor(languageService) {
         super(languageService);
