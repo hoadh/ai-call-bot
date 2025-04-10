@@ -6,7 +6,7 @@ export async function getCustomerInfo(phoneNumber) {
     const response = await fetch(url);
     console.log('Response status:', response.status);
     console.log('Response headers:', response.headers);
-    console.log('Response body:', await response.text());
+    //console.log('Response body:', await response.text());
     // Check if the response is ok (status code 200-299)
 
     if (response.status === 404) {
