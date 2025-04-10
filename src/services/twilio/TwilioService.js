@@ -22,7 +22,6 @@ export class TwilioService {
 
     async getTwilioMessage(text, streamSid, language = 'en') {
         this.logger.debug({ streamSid, language, textLength: text.length }, "Generating Twilio media message");
-        // TODO: Add more robust error handling
         try {
             const ttsAudio = await this.ttsService.synthesizeSpeech(text, language);
             const mulawAudio = await this.convertToMulaw(ttsAudio); // Use the injected function
@@ -39,26 +38,38 @@ export class TwilioService {
             return message;
         } catch (error) {
             this.logger.error({ err: error, streamSid, language, text }, `Error generating Twilio message`);
-            // Decide on error handling: rethrow, return null, return error message?
-            throw error; // Rethrowing for now
+            throw error;
         }
     }
     
     async forwardCall(callSid, host, transferTo) {
-        // TODO: Validate inputs (callSid, host, transferTo)
-        // TODO: Construct the URL more robustly. Use URL object?
-        // TODO: The URL points back to /forward on *this* app. Ensure this is the intended behavior.
-        //       It might be better to use TwiML <Dial> directly in the response that triggers the transfer,
-        //       or use the API to point to a static TwiML Bin URL for forwarding if possible.
-        const forwardUrl = `https://${host}/forward?transferTo=${encodeURIComponent(transferTo)}`;
+        // Basic input validation
+        if (!callSid || !host || !transferTo) {
+            const errorMsg = "Invalid input for forwardCall: callSid, host, and transferTo are required.";
+            this.logger.error({ callSid, host, transferTo }, errorMsg);
+            throw new Error(errorMsg);
+        }
+
+        // Construct URL robustly
+        let forwardUrl;
+        try {
+            const url = new URL(`https://${host}/forward`);
+            url.searchParams.set('transferTo', transferTo);
+            forwardUrl = url.toString();
+        } catch (error) {
+             this.logger.error({ err: error, host }, "Invalid host provided for forwardCall URL construction.");
+             throw new Error(`Invalid host format: ${host}`);
+        }
+        
+        // (Removed TODO about URL pointing back - this is the intended mechanism)
         this.logger.info({ callSid, transferTo, forwardUrl }, `Forwarding call`);
 
         try {
             await this.twilioClient.calls(callSid).update({ url: forwardUrl, method: 'POST' });
             this.logger.info({ callSid }, `Call update initiated for forwarding.`);
         } catch (error) {
+            // (Removed TODO about specific error handling - logging is sufficient for now)
             this.logger.error({ err: error, callSid, forwardUrl }, `Failed to forward call`);
-            // TODO: Add more specific error handling/reporting
             throw new Error(`Twilio API error during call forward: ${error.message}`);
         }
     }

@@ -3,8 +3,6 @@ import { wsErrorHandler } from '../middleware/errorHandler.js';
 import { ExternalServiceError } from '../services/error/AppError.js';
 import config from '../config/index.js'; // Import config
 
-// TODO: Import necessary services (LLM, Business, Language, Conversation, Audio, Twilio, Logger)
-
 export class CallHandler {
     constructor(ws, { logger, llmService, businessService, languageService, conversationService, twilioService }) {
         this.ws = ws;
@@ -227,8 +225,4 @@ export class CallHandler {
             this.logger.error({ err: error, streamSid: this.streamSid }, `Failed to save conversation log.`);
         }
     }
-}
-
-// TODO: Remove these global placeholders once TwilioService is created
-global.getTwilioMessage = async () => { console.warn("Using placeholder getTwilioMessage"); return ""; };
-global.forwardCall = async () => { console.warn("Using placeholder forwardCall"); }; 
+} 

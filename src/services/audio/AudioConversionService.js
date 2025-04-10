@@ -10,14 +10,22 @@ import logger from "../../config/logger.js"; // Import logger directly for now
  */
 export function convertToMulaw(audioBuffer) {
     const log = logger.child({ service: 'AudioConversion' }); // Create a child logger for this function
-    // TODO: Consider adding input validation (is it a buffer?)
+    
+    // Input validation
+    if (!Buffer.isBuffer(audioBuffer)) {
+        const errorMsg = "Invalid input: audioBuffer must be a Buffer.";
+        log.error({ inputType: typeof audioBuffer }, errorMsg);
+        return Promise.reject(new TypeError(errorMsg));
+    }
+    
     return new Promise((resolve, reject) => {
         let chunks = [];
         const stream = new Readable();
         stream.push(audioBuffer);
         stream.push(null); // Signal end of stream
 
-        // TODO: Check if ffmpeg path needs to be configured?
+        // Note: Ensure ffmpeg is installed and accessible in the system PATH.
+        // Configuration of the ffmpeg path might be necessary in some environments.
         ffmpeg(stream)
             .inputFormat("s16le")        // Input is signed 16-bit little-endian PCM (LINEAR16)
             .inputOptions(["-ar 24000"]) // Explicitly set input sample rate from TTS

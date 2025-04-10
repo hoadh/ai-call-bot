@@ -39,7 +39,6 @@ export class TTSService {
                 name: voiceConfig.voiceName,
                 ssmlGender: voiceConfig.ssmlGender
             },
-            // TODO: Make audio config (sample rate, pitch, rate) potentially configurable
             audioConfig: { 
                 audioEncoding: "LINEAR16", 
                 sampleRateHertz: 24000, // Note: This is the output rate of TTS, conversion happens later
