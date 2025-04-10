@@ -1,11 +1,31 @@
 ## Start Server
 
-```
-cp .env.example .env
-export GOOGLE_APPLICATION_CREDENTIALS="google-cloud-key.json"
-node server.js
-```
+1.  **Copy Environment Variables:**
+    ```bash
+    cp .env.example .env 
+    # Edit .env and fill in your API keys and configurations
+    ```
 
+2.  **Set Google Credentials Path:**
+    Ensure the `GOOGLE_APPLICATION_CREDENTIALS` environment variable points to your key file. You can set this in your shell environment or add it to the `.env` file.
+    ```bash
+    # Example for current shell session:
+    export GOOGLE_APPLICATION_CREDENTIALS="./google-cloud-key.json" 
+    # Or add to .env:
+    # GOOGLE_APPLICATION_CREDENTIALS="./google-cloud-key.json"
+    ```
+    *(Remember: Make sure your key file, e.g., `google-cloud-key.json`, is in your `.gitignore`!)*
+
+3.  **Run the Server:**
+    *   **Development (with auto-restart):**
+        ```bash
+        npm run dev
+        ```
+        *(Requires `nodemon` installed: `npm install --save-dev nodemon`)*
+    *   **Production:**
+        ```bash
+        npm start
+        ```
 
 ## Tests
 
