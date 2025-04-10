@@ -1,55 +1,55 @@
 import { LLMServiceFactory } from '../../../services/llm/LLMServiceFactory.js';
-import { MockLanguageService } from '../../mocks/LanguageService.mock.js';
-import { MockOpenAIService } from '../../mocks/OpenAIService.mock.js';
+import { LanguageService } from '../../../services/language/LanguageService.js'; // Import actual LanguageService for type checks
+import { OpenAIService } from '../../../services/llm/OpenAIService.js';
+import config from '../../../config/index.js'; // Import config to access API key
 
-// Mock the LanguageService module
-jest.mock('../../../services/language/LanguageService.js', () => {
-    return {
-        LanguageService: jest.fn().mockImplementation(() => {
-            return new MockLanguageService();
-        })
-    };
-});
+// Mock the OpenAIService module to check constructor arguments
+jest.mock('../../../services/llm/OpenAIService.js');
 
-// Mock the OpenAIService module
-jest.mock('../../../services/llm/OpenAIService.js', () => {
-    return {
-        OpenAIService: jest.fn().mockImplementation((languageService) => {
-            return new MockOpenAIService(languageService);
-        })
-    };
-});
+// Mock LanguageService for simplicity in these tests
+jest.mock('../../../services/language/LanguageService.js');
 
 describe('LLMServiceFactory', () => {
-    let mockLanguageService;
+    let mockLanguageServiceInstance;
 
     beforeEach(() => {
-        mockLanguageService = new MockLanguageService();
-        LLMServiceFactory.initialize(mockLanguageService);
-    });
-
-    afterEach(() => {
-        // Clear the container after each test
-        LLMServiceFactory.container = new (require('../../../services/di/Container.js').Container)();
-        // Clear all mocks
+        // Reset mocks and clear factory state
         jest.clearAllMocks();
+        LLMServiceFactory.languageServiceInstance = null; // Reset internal state
+
+        // Create a mock instance for LanguageService
+        mockLanguageServiceInstance = new LanguageService(); // Use the mocked constructor
+        
+        // Initialize factory with the mock instance
+        LLMServiceFactory.initialize(mockLanguageServiceInstance);
     });
 
-    test('should initialize with language service', () => {
-        const service = LLMServiceFactory.createService();
+    test('should throw error if not initialized before creating service', () => {
+        LLMServiceFactory.languageServiceInstance = null; // Ensure not initialized
+        expect(() => LLMServiceFactory.createService('openai')).toThrow('LLMServiceFactory not initialized');
+    });
+
+    test('should create OpenAIService instance with correct arguments', () => {
+        const service = LLMServiceFactory.createService('openai');
+
         expect(service).toBeDefined();
-        expect(service.languageService).toBeDefined();
+        // Check if OpenAIService constructor was called correctly
+        expect(OpenAIService).toHaveBeenCalledTimes(1);
+        expect(OpenAIService).toHaveBeenCalledWith(
+            config.openai.apiKey, // Check if API key from config was passed
+            mockLanguageServiceInstance // Check if the correct language service instance was passed
+        );
+        // Check if the returned service is an instance created by the mock constructor
+        expect(service).toBeInstanceOf(OpenAIService); 
     });
 
-    test('should create OpenAIService instance', () => {
-        const service = LLMServiceFactory.createService();
-        expect(service).toBeDefined();
-        expect(service.languageService).toBeInstanceOf(MockLanguageService);
+    test('should throw error for unsupported service type', () => {
+        expect(() => LLMServiceFactory.createService('unsupported_type'))
+            .toThrow('Unsupported LLM service type: unsupported_type');
     });
 
-    test('should handle service creation errors', () => {
-        // Force an error by clearing the container
-        LLMServiceFactory.container = new (require('../../../services/di/Container.js').Container)();
-        expect(() => LLMServiceFactory.createService()).toThrow();
+    test('initialize should throw error if no languageService is provided', () => {
+        LLMServiceFactory.languageServiceInstance = null; // Reset state
+        expect(() => LLMServiceFactory.initialize(null)).toThrow('LanguageService instance is required');
     });
 }); 

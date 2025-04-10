@@ -97,7 +97,9 @@ export class CallHandler {
             const intentHandlingResult = await this.llmService.detectIntentAndHandle(userMessage, this.phoneNumber);
             messageLogger.info({ result: intentHandlingResult }, "Intent Handling Result");
 
-            let aiResponse;
+            let aiResponse = null; // Initialize to null
+            let transferInitiated = false; // Flag
+
             if (intentHandlingResult !== "No action required.") {
                 const businessResult = await this.businessService.handleIntent(
                     intent,
@@ -112,14 +114,16 @@ export class CallHandler {
                 if (businessResult.shouldTransfer) {
                     messageLogger.info("Initiating call transfer...");
                     const transferNumber = this.businessService.getTransferNumber(this.phoneNumberSid);
-                    await this.twilioService.forwardCall(this.callSid, this.host, transferNumber);
+                    await this.twilioService.forwardCall(this.callSid, this.host, transferNumber); 
                     messageLogger.info("Call transfer initiated.");
-                    return; 
+                    transferInitiated = true; // Set flag
+                } else {
+                    aiResponse = businessResult.response; // Only assign if not transferring
                 }
-                aiResponse = businessResult.response;
             }
 
-            if (!aiResponse) {
+            // Only generate generic response if no specific response was set AND no transfer happened
+            if (aiResponse === null && !transferInitiated) {
                 messageLogger.debug("Generating generic LLM response.");
                 aiResponse = await this.llmService.getResponse(`${guideline}\\n\\n${history}\\nUser: ${userMessage}\\nAI:`);
                 if (this.currentLanguage !== 'en') {
@@ -127,21 +131,29 @@ export class CallHandler {
                 }
             }
 
-            messageLogger.info(`AI: ${aiResponse}`);
-            this.conversationLog.push({ role: 'AI', content: aiResponse });
+            // Only send response if a response exists and no transfer happened
+            if (aiResponse !== null && !transferInitiated) {
+                messageLogger.info(`AI: ${aiResponse}`);
+                this.conversationLog.push({ role: 'AI', content: aiResponse });
 
-            const mediaMessage = await this.twilioService.getTwilioMessage(aiResponse, this.streamSid, this.currentLanguage);
-            this.ws.send(mediaMessage, (error) => {
-                if (error) {
-                    messageLogger.error({ err: error }, "WebSocket send error");
-                    // Rethrow or handle as appropriate
-                    throw new ExternalServiceError('WebSocket', `Error sending message: ${error.message}`);
-                } else if (isGoodbyeResponse) {
-                    messageLogger.info('Final message sent. Closing connection soon.');
-                    const delay = Math.ceil(2000);
-                    setTimeout(() => this.ws.close(), delay);
-                }
-            });
+                const mediaMessage = await this.twilioService.getTwilioMessage(aiResponse, this.streamSid, this.currentLanguage);
+                this.ws.send(mediaMessage, (error) => {
+                    if (error) {
+                        messageLogger.error({ err: error }, "WebSocket send error");
+                        // Rethrow or handle as appropriate
+                        throw new ExternalServiceError('WebSocket', `Error sending message: ${error.message}`);
+                    } else if (isGoodbyeResponse) {
+                        messageLogger.info('Final message sent. Closing connection soon.');
+                        const delay = Math.ceil(2000); // TODO: Make delay configurable?
+                        setTimeout(() => this.ws.close(), delay);
+                    }
+                });
+            } else if (transferInitiated) {
+                messageLogger.info("Transfer initiated, no AI response sent.");
+            } else {
+                // Case where no action was required and no generic response needed (should this happen?)
+                messageLogger.info("No AI response generated or sent.");
+            }
         } catch (error) {
             this.logger.error({ err: error }, 'Error processing final transcript.');
             wsErrorHandler(error, this.ws);
