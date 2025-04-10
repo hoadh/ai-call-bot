@@ -29,11 +29,83 @@
 
 ## Tests
 
-```
-cp cp .env.example .env.test
-export GOOGLE_APPLICATION_CREDENTIALS="google-cloud-key.json"
+```bash
+# Ensure test environment variables are set (e.g., in .env.test)
+# cp .env.example .env.test 
+export GOOGLE_APPLICATION_CREDENTIALS="./google-cloud-key.json"
 npm test
 ```
+
+## Development Guidelines
+
+This section provides guidance for developers looking to extend the application or add new features.
+
+### Project Structure Overview
+
+Familiarize yourself with the project structure outlined in the **Structure** section above. Key directories include:
+*   `src/config`: Application configuration and logger.
+*   `src/handlers`: WebSocket connection logic (`CallHandler`).
+*   `src/middleware`: Express middleware (e.g., error handling).
+*   `src/routes`: HTTP route definitions.
+*   `src/services`: Core business logic, external API clients, utilities.
+*   `src/__tests__`: Unit and integration tests.
+
+### Running in Development Mode
+
+Use the `dev` script for development. It utilizes `nodemon` to automatically restart the server upon file changes:
+
+```bash
+npm run dev
+```
+
+### Configuration
+
+*   **Environment Variables:** Define new environment variables in `.env` for local development and document them in `.env.example`.
+*   **Validation:** Add validation rules for new variables to the Joi schema in `src/config/index.js`.
+*   **Access:** Access configuration values throughout the application by importing the `config` object from `src/config/index.js`. Avoid using `process.env` directly outside of the configuration files.
+
+### Adding New Services
+
+1.  **Location:** Place new service logic within the `src/services/` directory. Create subdirectories for logical grouping (e.g., `src/services/new-external-api/`).
+2.  **Dependencies:** Inject necessary dependencies (like `config`, `logger`, or other services) into your service's constructor.
+3.  **Initialization:** Update `src/server.js` (`initializeServices` function) to instantiate your new service and inject its dependencies.
+4.  **Injection:** Pass the new service instance to the components that need it (e.g., `CallHandler`, other services) during initialization in `src/server.js`.
+
+### Adding HTTP Routes
+
+1.  **Create Router:** Add new route handlers to existing router files (e.g., `src/routes/twilioRoutes.js`) or create a new router file in `src/routes/` for a distinct functional area.
+2.  **Define Routes:** Use `express.Router()` to define your routes (`router.get`, `router.post`, etc.).
+3.  **Mount Router:** If you created a new router file, import it and mount it in `src/server.js` using `app.use('/path-prefix', newRouter);`.
+4.  **Dependencies:** If your route handlers need access to services, consider creating a controller pattern or injecting dependencies into the router module during setup (though direct service injection into route files is less common).
+
+### Modifying WebSocket Handling
+
+*   The primary WebSocket logic resides in `src/handlers/CallHandler.js`. Modifications to call flow, transcription event handling, or service interactions during a call likely belong here.
+*   Ensure dependencies needed by `CallHandler` are injected via its constructor in `src/server.js`.
+
+### Logging
+
+*   A `pino` logger is configured (`src/config/logger.js`) and injected into services and handlers.
+*   Use the injected `logger` instance (e.g., `this.logger.info(...)`, `this.logger.error({ err: error }, ...)`). Avoid `console.log`.
+*   Utilize child loggers (`logger.child({ key: value })`) to add contextual information.
+
+### Testing
+
+*   **Requirement:** Add tests for any new features or significant changes.
+*   **Unit Tests:** Place unit tests for services, handlers, etc., in `src/__tests__/` mirroring the source directory structure (e.g., `src/__tests__/services/new-service.test.js`). Mock dependencies using `jest.mock()`.
+*   **Integration Tests:** Add tests to `src/__tests__/integration/` to verify interactions between components or endpoints.
+*   **Run Tests:** Use `npm test` or `npm run test:watch`.
+
+### Error Handling
+
+*   Use custom error classes defined in `src/services/error/AppError.js` where appropriate.
+*   Utilize the centralized Express error handler in `src/middleware/errorHandler.js`.
+*   Log errors using the injected `logger`.
+
+### Code Style
+
+*   Follow existing code patterns and conventions regarding naming, structure, and comments.
+*   Consider adding a linter (like ESLint) and code formatter (like Prettier) to enforce consistency if not already present.
 
 ## Structure
 
