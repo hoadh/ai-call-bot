@@ -1,13 +1,15 @@
 import twilio from 'twilio';
+import config from '../../config/index.js'; // Import config
 
 export class TwilioService {
     constructor(logger, ttsService, audioConversionFunction) {
         this.logger = logger || console;
-        // TODO: Validate environment variables (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
-            throw new Error("Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) are missing in environment variables.");
-        }
-        this.twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        // Credentials are now validated in config/index.js
+        // Remove direct process.env access and redundant checks here
+        // if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+        //     throw new Error("Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) are missing in environment variables.");
+        // }
+        this.twilioClient = twilio(config.twilio.accountSid, config.twilio.authToken); // Use config values
         
         // Store injected dependencies
         if (!ttsService) throw new Error("TTSService dependency is required.");

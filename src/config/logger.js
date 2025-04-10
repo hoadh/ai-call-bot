@@ -1,10 +1,15 @@
 import pino from 'pino';
+// Removed config import to break circular dependency
+// import config from './index.js'; 
 
-const isProduction = process.env.NODE_ENV === 'production';
+// Read directly from process.env for logger setup
+const nodeEnv = process.env.NODE_ENV || 'development';
+const logLevel = process.env.LOG_LEVEL || (nodeEnv === 'production' ? 'info' : 'debug');
+const isProduction = nodeEnv === 'production';
 
-// Basic Pino configuration
+// Basic Pino configuration using direct env vars
 const loggerOptions = {
-    level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
+    level: logLevel, 
     // Use pino-pretty for nice console output in development, JSON in production
     ...(isProduction ? {} : {
         transport: {

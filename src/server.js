@@ -1,7 +1,6 @@
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import 'dotenv/config';
 import crypto from 'crypto';
 import { LLMServiceFactory } from './services/llm/LLMServiceFactory.js';
 import { BusinessServiceFactory } from './services/business/BusinessServiceFactory.js';
@@ -15,13 +14,11 @@ import { TTSService } from './services/audio/TTSService.js';
 import { convertToMulaw } from './services/audio/AudioConversionService.js'; // Keep direct import for now
 import { TwilioService } from './services/twilio/TwilioService.js';
 import logger from './config/logger.js'; // Import the logger
+import config from './config/index.js'; // Import the centralized config
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
-
-// Define test SID in a constant or load from environment
-const TEST_PHONE_NUMBER_SID = process.env.TEST_PHONE_NUMBER_SID || "TEST123456789";
 
 // Initialize services
 async function initializeServices() {
@@ -41,8 +38,8 @@ async function initializeServices() {
         LLMServiceFactory.initialize(languageService);
         
         // Create services through factories/DI
-        const llmService = LLMServiceFactory.createService(process.env.LLM_SERVICE_TYPE || 'openai'); // Assuming factory handles logger injection if needed
-        const businessService = BusinessServiceFactory.createService(process.env.BUSINESS_TYPE || 'nail_salon'); // Assuming factory handles logger injection if needed
+        const llmService = LLMServiceFactory.createService(config.services.llmType);
+        const businessService = BusinessServiceFactory.createService(config.services.businessType);
         
         logger.info("All services initialized successfully.");
 
@@ -107,7 +104,7 @@ wss.on('connection', (ws) => {
 // Removed helper functions getAudioToTwilio, getTwilioMessage, forwardCall
 
 async function startServer() {
-    const port = process.env.PORT || 3000;
+    const port = config.port; // Use port from config
     server.listen(port, () => {
         appLogger.info(`Server listening on port ${port}`);
     });

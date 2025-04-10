@@ -1,6 +1,7 @@
 import { RealtimeTranscriber } from 'assemblyai';
 import { wsErrorHandler } from '../middleware/errorHandler.js';
 import { ExternalServiceError } from '../services/error/AppError.js';
+import config from '../config/index.js'; // Import config
 
 // TODO: Import necessary services (LLM, Business, Language, Conversation, Audio, Twilio, Logger)
 
@@ -34,7 +35,7 @@ export class CallHandler {
     async initialize() {
         this.logger.debug('Initializing RealtimeTranscriber...');
         this.transcriber = new RealtimeTranscriber({
-            apiKey: process.env.ASSEMBLYAI_API_KEY,
+            apiKey: config.assemblyAi.apiKey, // Use config value
             encoding: 'pcm_mulaw',
             sampleRate: 8000
         });

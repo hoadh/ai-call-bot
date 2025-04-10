@@ -2,19 +2,20 @@ import { BaseLLMService } from './BaseLLMService.js';
 import OpenAI from 'openai';
 import { intentFunctions } from './intentFunctions.js';
 import { ExternalServiceError } from '../error/AppError.js';
-
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+import config from '../../config/index.js'; // Import config
 
 export class OpenAIService extends BaseLLMService {
-    constructor(languageService) {
+    constructor(apiKey, languageService) {
         super(languageService);
+        if (!apiKey) {
+            throw new Error("OpenAI API key is required for OpenAIService.");
+        }
+        this.openai = new OpenAI({ apiKey });
     }
 
     async detectIntent(userMessage) {
         try {
-            const response = await openai.chat.completions.create({
+            const response = await this.openai.chat.completions.create({
                 model: "gpt-4-turbo",
                 messages: [{ role: "user", content: userMessage }],
                 functions: intentFunctions,
@@ -28,6 +29,7 @@ export class OpenAIService extends BaseLLMService {
             }
             return "Unknown_Intent";
         } catch (error) {
+            console.error('OpenAI Error in detectIntent:', error);
             throw new ExternalServiceError('OpenAI', `Error detecting intent: ${error.message}`);
         }
     }
@@ -40,6 +42,7 @@ export class OpenAIService extends BaseLLMService {
             }
             return intent;
         } catch (error) {
+            console.error('OpenAI Error in detectIntentAndHandle:', error);
             throw new ExternalServiceError('OpenAI', `Error handling intent: ${error.message}`);
         }
     }
@@ -52,7 +55,7 @@ export class OpenAIService extends BaseLLMService {
             }
             messages.push({ role: "user", content: prompt });
 
-            const response = await openai.chat.completions.create({
+            const response = await this.openai.chat.completions.create({
                 model: "gpt-4-turbo",
                 messages: messages,
                 temperature: 0.7,
@@ -61,13 +64,14 @@ export class OpenAIService extends BaseLLMService {
 
             return response.choices[0].message.content;
         } catch (error) {
+            console.error('OpenAI Error in getResponse:', error);
             throw new ExternalServiceError('OpenAI', `Error getting response: ${error.message}`);
         }
     }
 
     async isGoodbye(text) {
         try {
-            const response = await openai.chat.completions.create({
+            const response = await this.openai.chat.completions.create({
                 model: "gpt-4-turbo",
                 messages: [
                     { role: "system", content: "Determine if the text is a goodbye message. Respond with true or false." },
@@ -79,6 +83,7 @@ export class OpenAIService extends BaseLLMService {
 
             return response.choices[0].message.content.toLowerCase().includes('true');
         } catch (error) {
+            console.error('OpenAI Error in isGoodbye:', error);
             throw new ExternalServiceError('OpenAI', `Error checking goodbye: ${error.message}`);
         }
     }

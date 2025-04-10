@@ -1,4 +1,5 @@
 import textToSpeech from "@google-cloud/text-to-speech";
+import config from "../../config/index.js"; // Import config
 
 // Language to voice mapping (consider making this configurable)
 const LANGUAGE_VOICE_MAP = {
@@ -15,7 +16,9 @@ const LANGUAGE_VOICE_MAP = {
 export class TTSService {
     constructor(logger) {
         this.logger = logger || console; // Fallback to console if logger not provided
-        // TODO: Handle credentials more robustly (e.g., check GOOGLE_APPLICATION_CREDENTIALS)
+        // Credential path is validated in config/index.js
+        // The google-cloud library automatically uses GOOGLE_APPLICATION_CREDENTIALS env var
+        // No direct config access needed here for credentials, unless explicitly overriding
         try {
             this.client = new textToSpeech.TextToSpeechClient();
             this.logger.info("Google Text-to-Speech client initialized.");

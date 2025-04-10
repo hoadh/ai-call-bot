@@ -1,9 +1,10 @@
 import express from 'express';
 import logger from '../config/logger.js'; // Import logger
+import config from '../config/index.js'; // Import config
 
 // TODO: Import TwilioService if needed for /forward route
 // TODO: Load TEST_PHONE_NUMBER_SID from config/env
-const TEST_PHONE_NUMBER_SID = process.env.TEST_PHONE_NUMBER_SID || "TEST123456789";
+// Removed TEST_PHONE_NUMBER_SID constant
 
 const router = express.Router();
 
@@ -19,9 +20,8 @@ router.post('/', async (req, res) => {
     routeLogger.info(`Incoming call POST request received`);
     routeLogger.debug({ body: req.body }, 'Request body');
 
-    // Use nullish coalescing to handle both undefined and empty string cases
-    // TODO: Fetch TEST_PHONE_NUMBER_SID from centralized config
-    const phoneNumberSid = twilioNumber?.trim() || TEST_PHONE_NUMBER_SID; 
+    // Use config value for default/test SID
+    const phoneNumberSid = twilioNumber?.trim() || config.twilio.testPhoneNumberSid; 
     routeLogger.info({ phoneNumberSid }, `Connecting call via WebSocket`);
 
     // Generate TwiML to connect the call to the WebSocket stream
