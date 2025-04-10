@@ -55,9 +55,11 @@ const functions = [
 
 export async function detectIntentByFunction(userMessage) {
     console.log("userMessage", userMessage);
+    const today = new Date().toISOString().split("T")[0]; // Lấy ngày hiện tại (YYYY-MM-DD)
+    const fullMessage = `Today is ${today}. ${userMessage}`;
     const response = await openai.chat.completions.create({
         model: "gpt-4-turbo",
-        messages: [{ role: "user", content: userMessage }],
+        messages: [{ role: "user", content: fullMessage }],
         functions: functions,
         function_call: "auto", // OpenAI will decide when to call the function
     });
@@ -65,10 +67,14 @@ export async function detectIntentByFunction(userMessage) {
     const functionResponse = response.choices[0].message.function_call;
     if (functionResponse) {
         const args = JSON.parse(functionResponse.arguments);
-        console.log(" args", JSON.stringify(args));
-        const { intent } = JSON.parse(functionResponse.arguments);
-        console.log(" Intent in IntentDetection", JSON.stringify(intent));
-        return intent;
+        const { intent, date, time } = args;
+
+        console.log("Args:", args);
+        console.log("Intent:", intent);
+        console.log("Date:", date);
+        console.log("Time:", time);
+
+    return { intent, date, time };
     }
     return "Unknown_Intent"; // Fallback if no intent detected
 }

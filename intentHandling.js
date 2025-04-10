@@ -58,7 +58,7 @@ export async function detectIntentAndHandle(userMessage, phoneNumber) {
     return "No action required.";
 }
 
-async function handleAppointment(action, phoneNumber, appointmentTime) {
+export async function handleAppointment(action, phoneNumber, appointmentTime) {
     let apiUrl = `${process.env.INTERNAL_BACKEND_API_URL}/booking`;
     let requestData = { customer: null };
     if (phoneNumber) {
