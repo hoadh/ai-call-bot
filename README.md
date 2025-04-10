@@ -19,21 +19,28 @@ npm test
 
 This project is organized into the following key components:
 
-- **`server.js`**: The main entry point of the application. It sets up the Express server, WebSocket server for Twilio media streams, handles incoming calls, manages the real-time transcription process using AssemblyAI, and orchestrates interactions between different services.
-- **`services/`**: Contains various modules responsible for specific functionalities:
-    - **`llm/`**: Handles interactions with Large Language Models (e.g., OpenAI) for tasks like intent detection and response generation. Includes a factory (`LLMServiceFactory.js`) for creating different LLM service instances.
-    - **`business/`**: Implements the core business logic specific to the application domain (e.g., `NailSalonService.js`). Uses a factory pattern (`BusinessServiceFactory.js`) and a base class (`BaseBusinessService.js`). Relies on configuration loaded by `ConfigService.js`.
-    - **`language/`**: Provides language detection and translation capabilities using Google Cloud Translate (`LanguageService.js`).
-    - **`conversation/`**: Manages saving and potentially retrieving conversation logs (`ConversationService.js`).
-    - **`config/`**: Loads and provides access to business-specific configurations (like prompts, services, hours) based on the phone number SID (`ConfigService.js`).
-    - **`customer/`**: Manages customer data interactions, likely with an internal backend (`CustomerService.js`).
-    - **`error/`**: Defines custom error classes (`AppError.js`) for consistent error handling.
-    - **`appointmentService.js`**: Interacts with an internal backend API to handle appointment booking, rescheduling, and cancellation.
-- **`middleware/`**: Contains Express middleware, such as error handlers (`errorHandler.js`).
-- **`__tests__/`**: Holds integration and unit tests for various services and components.
-- **`tts.js`**: Handles Text-to-Speech conversion, likely using a cloud service.
-- **`convert.js`**: Provides audio format conversion utilities (e.g., converting audio to μ-law for Twilio).
-- **`.env` / `.env.example`**: Files for managing environment variables (API keys, service URLs, configurations).
+- **`src/`**: Contains all application source code.
+    - **`server.js`**: The main entry point. Sets up Express, WebSocket server, initializes services, and handles composition root tasks.
+    - **`config/`**: Manages configuration loading (`index.js` using Joi/dotenv) and logger setup (`logger.js` using Pino).
+    - **`handlers/`**: Contains WebSocket connection handlers.
+        - **`CallHandler.js`**: Manages the lifecycle and logic for a single WebSocket connection (Twilio media stream), including transcription and service orchestration.
+    - **`routes/`**: Defines HTTP endpoints using Express Router.
+        - **`twilioRoutes.js`**: Handles incoming webhooks from Twilio (e.g., for new calls, forwarding).
+    - **`services/`**: Contains modules responsible for specific functionalities:
+        - **`audio/`**: Handles Text-to-Speech (`TTSService.js`) and audio format conversion (`AudioConversionService.js`).
+        - **`twilio/`**: Encapsulates interactions with the Twilio API (sending messages, forwarding calls) (`TwilioService.js`).
+        - **`llm/`**: Handles interactions with Large Language Models (e.g., OpenAI) (`OpenAIService.js`, `LLMServiceFactory.js`).
+        - **`business/`**: Implements core application domain logic (`NailSalonService.js`, `BusinessServiceFactory.js`, `BaseBusinessService.js`).
+        - **`language/`**: Provides language detection/translation (`LanguageService.js`).
+        - **`conversation/`**: Manages saving/retrieving conversation logs (`ConversationService.js`).
+        - **`customer/`**: Manages customer data interactions (`CustomerService.js`).
+        - **`error/`**: Defines custom error classes (`AppError.js`) and potentially error reporting.
+        - **`di/`**: May contain dependency injection container logic (though currently simplified in factories).
+        - **`appointmentService.js`**: Interacts with backend for appointments.
+    - **`middleware/`**: Contains Express middleware (`errorHandler.js`).
+    - **`__tests__/`**: Holds integration and unit tests, mirroring the `src/` structure.
+- **`.env` / `.env.example` / `.env.test`**: Files for managing environment variables.
+- **`google-cloud-key.json`**: Service account key for Google Cloud services (ensure this is in `.gitignore`!).
 - **`package.json`**: Defines project dependencies and npm scripts.
-- **`README.md`**: This file, providing documentation for the project.
-- **`conversations/`**: Default directory where conversation logs are stored by `ConversationService.js`.
+- **`README.md`**: This file.
+- **`conversations/`**: Default directory where conversation logs are stored.
