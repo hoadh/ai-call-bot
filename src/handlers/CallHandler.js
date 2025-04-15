@@ -1,19 +1,19 @@
-import { RealtimeTranscriber } from 'assemblyai';
+import { SpeechClient } from '@google-cloud/speech';
+import { PassThrough } from 'stream';
 import { wsErrorHandler } from '../middleware/errorHandler.js';
 import { ExternalServiceError } from '../services/error/AppError.js';
-import config from '../config/index.js'; // Import config
+import config from '../config/index.js'; // Optional if needed
 
 export class CallHandler {
     constructor(ws, { logger, llmService, businessService, languageService, conversationService, twilioService }) {
         this.ws = ws;
-        this.logger = logger || console; // Store logger
+        this.logger = logger || console;
         this.llmService = llmService;
         this.businessService = businessService;
         this.languageService = languageService;
         this.conversationService = conversationService;
         this.twilioService = twilioService;
 
-        // Call state
         this.streamSid = null;
         this.phoneNumber = null;
         this.phoneNumberSid = null;
@@ -23,51 +23,64 @@ export class CallHandler {
         this.callSid = null;
         this.host = null;
 
-        this.transcriber = null;
-        this.transcriberConnectionPromise = null;
+        // Google Speech client and stream
+        this.speechClient = new SpeechClient();
+        this.audioStream = new PassThrough(); // Audio stream to feed into Google
+        this.googleStream = null;
 
         this.logger.info('CallHandler initialized.');
         this.initialize();
     }
 
     async initialize() {
-        this.logger.debug('Initializing RealtimeTranscriber...');
-        this.transcriber = new RealtimeTranscriber({
-            apiKey: config.assemblyAi.apiKey, // Use config value
-            encoding: 'pcm_mulaw',
-            sampleRate: 8000
-        });
-
         try {
-            this.transcriberConnectionPromise = this.transcriber.connect();
+            const request = {
+                config: {
+                    encoding: 'MULAW',
+                    sampleRateHertz: 8000,
+                    languageCode: 'en-US',
+                    enableAutomaticPunctuation: true
+                },
+                interimResults: true,
+            };
 
-            this.transcriber.on('open', this.handleTranscriberOpen.bind(this));
-            this.transcriber.on('transcript.partial', this.handleTranscriberPartial.bind(this));
-            this.transcriber.on('transcript.final', this.handleTranscriberFinal.bind(this));
-            this.transcriber.on('error', this.handleTranscriberError.bind(this));
-            this.transcriber.on('close', this.handleTranscriberClose.bind(this));
+            this.googleStream = this.speechClient
+                .streamingRecognize(request)
+                .on('error', this.handleTranscriberError.bind(this))
+                .on('data', this.handleTranscriberData.bind(this));
+
+            this.audioStream.pipe(this.googleStream);
 
             this.ws.on('message', this.handleWsMessage.bind(this));
             this.ws.on('close', this.handleWsClose.bind(this));
 
-            await this.transcriberConnectionPromise;
-            this.logger.info('Transcriber connection established.');
+            this.logger.info('Google Speech stream initialized.');
         } catch (error) {
-            this.logger.error({ err: error }, 'Transcriber connection failed.');
-            wsErrorHandler(error, this.ws); // Use existing WS error handler
+            this.logger.error({ err: error }, 'Failed to initialize Google Speech stream.');
+            wsErrorHandler(error, this.ws);
         }
     }
-    
-    handleTranscriberOpen() {
-        this.logger.info('Transcriber connection open.');
+
+    handleTranscriberError(error) {
+        this.logger.error({ err: error }, 'Google Speech-to-Text error.');
+        wsErrorHandler(new ExternalServiceError('Transcription', error.message), this.ws);
     }
 
-    handleTranscriberPartial(partialTranscript) {
-        if (!partialTranscript.text) return;
-        // Log partial transcripts at trace level if desired, or debug
-        this.logger.trace({ transcript: partialTranscript.text }, "Partial transcript received"); 
+    async handleTranscriberData(data) {
+        const transcript = data.results?.[0]?.alternatives?.[0]?.transcript || '';
+        const isFinal = data.results?.[0]?.isFinal;
+
+        if (!transcript) return;
+
+        if (isFinal) {
+            this.logger.debug({ transcript }, 'Final transcript received.');
+            await this.handleTranscriberFinal({ text: transcript });
+        } else {
+            this.logger.trace({ transcript }, 'Partial transcript received.');
+        }
     }
 
+    // Keep this method unchanged
     async handleTranscriberFinal(finalTranscript) {
         this.logger.debug({ transcript: finalTranscript.text }, 'Final transcript received.');
         try {
@@ -88,7 +101,7 @@ export class CallHandler {
 
             const history = this.conversationLog.map((message) => (message.role === 'user') ? `User: ${message.content}` : `AI: ${message.content}`).join('\\n');
             let guideline = await this.businessService.getSystemPrompt(this.currentLanguage, this.phoneNumberSid);
-            
+
             const isGoodbyeResponse = await this.llmService.isGoodbye(userMessage);
             if (isGoodbyeResponse) {
                 guideline = await this.businessService.getGoodbyePrompt(this.currentLanguage, this.phoneNumberSid);
@@ -114,7 +127,7 @@ export class CallHandler {
                 if (businessResult.shouldTransfer) {
                     messageLogger.info("Initiating call transfer...");
                     const transferNumber = this.businessService.getTransferNumber(this.phoneNumberSid);
-                    await this.twilioService.forwardCall(this.callSid, this.host, transferNumber); 
+                    await this.twilioService.forwardCall(this.callSid, this.host, transferNumber);
                     messageLogger.info("Call transfer initiated.");
                     transferInitiated = true; // Set flag
                 } else {
@@ -160,15 +173,6 @@ export class CallHandler {
         }
     }
 
-    handleTranscriberError(error) {
-        this.logger.error({ err: error }, 'Transcriber error.');
-        wsErrorHandler(new ExternalServiceError('Transcription', error.message), this.ws);
-    }
-
-    handleTranscriberClose() {
-        this.logger.info('Transcriber connection closed.');
-    }
-
     async handleWsMessage(message) {
         let msg;
         try {
@@ -185,56 +189,62 @@ export class CallHandler {
                     const { customParameters } = msg.start;
                     const callerId = customParameters.caller_id.replace('+', '').replace('client:', '');
                     this.phoneNumberSid = customParameters.phone_number_sid;
-                    this.callSid = msg.start.callSid; // Use callSid from start event
+                    this.callSid = msg.start.callSid;
                     this.host = customParameters.host;
                     this.logger.info({ callerId, phoneNumberSid: this.phoneNumberSid, callSid: this.callSid, streamSid: this.streamSid }, 'Call started');
                     this.phoneNumber = callerId;
-                    
+
                     this.customerInfo = await this.businessService.getCustomerInfo(callerId);
                     const welcomeMessage = await this.businessService.getWelcomeMessage(this.customerInfo, this.currentLanguage, this.phoneNumberSid);
                     this.logger.info(`AI Welcome: ${welcomeMessage}`);
                     this.conversationLog.push({ role: 'assistant', content: welcomeMessage });
-                    
+
                     const twilioMessage = await this.twilioService.getTwilioMessage(welcomeMessage, this.streamSid, this.currentLanguage);
                     this.ws.send(twilioMessage);
                     break;
+
                 case 'media':
-                    this.logger.trace('Received media payload.'); // Avoid logging actual payload unless debugging
-                    if (!this.transcriberConnectionPromise) {
-                         this.logger.warn('Received media before transcriber connection promise exists.');
-                         return;
-                    }
-                    await this.transcriberConnectionPromise;
-                    this.transcriber.sendAudio(Buffer.from(msg.media.payload, 'base64'));
+                    this.logger.trace('Received media payload.');
+                    const audioBuffer = Buffer.from(msg.media.payload, 'base64');
+                    this.audioStream.write(audioBuffer); // Pipe to Google
                     break;
+
                 case 'stop':
                     this.logger.info('Twilio media stream stopped.');
                     break;
+
                 default:
                     this.logger.warn({ event: msg?.event }, 'Received unknown WebSocket event type');
                     break;
             }
         } catch (error) {
             this.logger.error({ err: error, rawMessage: message }, 'Error processing WebSocket message.');
-            wsErrorHandler(error, this.ws); // Delegate actual WS error response
+            wsErrorHandler(error, this.ws);
         }
     }
 
     async handleWsClose() {
         this.logger.info('WebSocket disconnected.');
-        if (this.transcriber) {
-            await this.transcriber.close(); // Ensure transcriber is closed
-            this.logger.debug('Transcriber closed due to WebSocket disconnection.');
+
+        // End Google stream cleanly
+        if (this.audioStream) {
+            this.audioStream.end();
+            this.logger.debug('Audio stream ended.');
+        }
+
+        if (this.googleStream) {
+            this.googleStream.destroy(); // Ends the recognition stream
+            this.logger.debug('Google speech stream destroyed.');
         }
 
         try {
             if (this.conversationLog.length > 0) {
-                 this.logger.info({ streamSid: this.streamSid, logLength: this.conversationLog.length }, 'Saving conversation log.');
-                 await this.conversationService.saveConversation(this.conversationLog, this.streamSid);
-                 this.logger.info({ streamSid: this.streamSid }, 'Conversation log saved.');
+                this.logger.info({ streamSid: this.streamSid, logLength: this.conversationLog.length }, 'Saving conversation log.');
+                await this.conversationService.saveConversation(this.conversationLog, this.streamSid);
+                this.logger.info({ streamSid: this.streamSid }, 'Conversation log saved.');
             }
         } catch (error) {
             this.logger.error({ err: error, streamSid: this.streamSid }, `Failed to save conversation log.`);
         }
     }
-} 
+}
