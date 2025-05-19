@@ -73,16 +73,21 @@ export class NailSalonService extends BaseBusinessService {
 
     async getWelcomeMessage(customerInfo, language = 'en', phoneNumberSid) {
         await configService.loadConfig(phoneNumberSid);
-        const welcomePrompt = configService.getWelcomePrompt(phoneNumberSid, language);
-        const businessName = configService.getBusinessName(phoneNumberSid);
+        const welcomePrompt = configService.getWelcomePrompt(phoneNumberSid, language) || 'Welcome to our salon. How can I help you today?';
+        const businessName = configService.getBusinessName(phoneNumberSid) || 'our salon';
         
-        if (customerInfo?.name) {
-            return welcomePrompt
-                .replace('{businessName}', businessName)
-                .replace('{customerName}', customerInfo.name);
+        let message = welcomePrompt;
+        
+        // Safely replace placeholders
+        if (message.includes('{businessName}')) {
+            message = message.replace('{businessName}', businessName);
         }
         
-        return welcomePrompt.replace('{businessName}', businessName);
+        if (customerInfo?.name && message.includes('{customerName}')) {
+            message = message.replace('{customerName}', customerInfo.name);
+        }
+        
+        return message;
     }
 
     async getSystemPrompt(language = 'en', phoneNumberSid) {

@@ -19,9 +19,11 @@ export class CallHandler {
         this.phoneNumberSid = null;
         this.conversationLog = [];
         this.customerInfo = null;
-        this.currentLanguage = 'en';
+        this.currentLanguage = 'en-US'; // Start with English
         this.callSid = null;
         this.host = null;
+        this.userMessagesSinceLastSwitch = 0; // Track messages for language detection
+        this.pendingLanguageSwitch = false; // Flag to prevent multiple switches
 
         // Google Speech client and stream
         this.speechClient = new SpeechClient();
@@ -38,7 +40,7 @@ export class CallHandler {
                 config: {
                     encoding: 'MULAW',
                     sampleRateHertz: 8000,
-                    languageCode: 'en-US',
+                    languageCode: this.currentLanguage,
                     enableAutomaticPunctuation: true
                 },
                 interimResults: true,
@@ -61,6 +63,52 @@ export class CallHandler {
         }
     }
 
+    async switchLanguage(newLanguage) {
+        if (this.pendingLanguageSwitch) {
+            this.logger.debug('Language switch already in progress, skipping');
+            return;
+        }
+
+        this.pendingLanguageSwitch = true;
+        this.logger.info({ from: this.currentLanguage, to: newLanguage }, 'Switching transcriber language');
+
+        try {
+            // Close current stream
+            if (this.googleStream) {
+                this.googleStream.end();
+                this.audioStream.unpipe(this.googleStream);
+            }
+
+            // Update language
+            this.currentLanguage = newLanguage;
+            this.userMessagesSinceLastSwitch = 0;
+
+            // Initialize new stream with new language
+            const request = {
+                config: {
+                    encoding: 'MULAW',
+                    sampleRateHertz: 8000,
+                    languageCode: newLanguage,
+                    enableAutomaticPunctuation: true
+                },
+                interimResults: true,
+            };
+
+            this.googleStream = this.speechClient
+                .streamingRecognize(request)
+                .on('error', this.handleTranscriberError.bind(this))
+                .on('data', this.handleTranscriberData.bind(this));
+
+            this.audioStream.pipe(this.googleStream);
+            this.logger.info('New Google Speech stream initialized with updated language');
+        } catch (error) {
+            this.logger.error({ err: error }, 'Failed to switch language');
+            wsErrorHandler(error, this.ws);
+        } finally {
+            this.pendingLanguageSwitch = false;
+        }
+    }
+
     handleTranscriberError(error) {
         this.logger.error({ err: error }, 'Google Speech-to-Text error.');
         wsErrorHandler(new ExternalServiceError('Transcription', error.message), this.ws);
@@ -80,21 +128,26 @@ export class CallHandler {
         }
     }
 
-    // Keep this method unchanged
     async handleTranscriberFinal(finalTranscript) {
         this.logger.debug({ transcript: finalTranscript.text }, 'Final transcript received.');
         try {
             const userMessage = finalTranscript.text;
-
-            // Add message details to logger context for subsequent logs in this method
             const messageLogger = this.logger.child({ userMessage: userMessage });
 
             messageLogger.info(`User: ${userMessage}`);
             this.conversationLog.push({ role: 'user', content: userMessage });
 
-            // Detect language
-            this.currentLanguage = await this.languageService.detectLanguage(userMessage);
-            messageLogger.info({ language: this.currentLanguage }, "Detected Language");
+            // Detect language and handle switching if needed
+            const detectedLanguage = await this.languageService.detectLanguage(userMessage);
+            messageLogger.info({ detectedLanguage, currentLanguage: this.currentLanguage }, "Detected Language");
+
+            // Only consider switching after at least 2 full messages
+            this.userMessagesSinceLastSwitch++;
+            if (this.userMessagesSinceLastSwitch >= 2 && 
+                detectedLanguage && 
+                detectedLanguage !== this.currentLanguage) {
+                await this.switchLanguage(detectedLanguage);
+            }
 
             const intent = await this.llmService.detectIntent(userMessage);
             messageLogger.info({ intent: intent }, "Detected Intent");
