@@ -61,6 +61,8 @@ export class CallHandler {
     }
 
     // Open a streamingRecognize session for the given app language and pipe call audio into it.
+    // Events from a stream that has since been replaced (see switchLanguage) are ignored so
+    // late results from the old language never get processed under the new one.
     createSpeechStream(language) {
         const request = {
             config: {
@@ -72,12 +74,14 @@ export class CallHandler {
             interimResults: true,
         };
 
-        this.googleStream = this.speechClient
-            .streamingRecognize(request)
-            .on('error', this.handleTranscriberError.bind(this))
-            .on('data', this.handleTranscriberData.bind(this));
+        const stream = this.speechClient.streamingRecognize(request);
+        const isCurrent = () => stream === this.googleStream;
+        stream
+            .on('error', (error) => isCurrent() && this.handleTranscriberError(error))
+            .on('data', (data) => isCurrent() ? this.handleTranscriberData(data) : undefined);
 
-        this.audioStream.pipe(this.googleStream);
+        this.googleStream = stream;
+        this.audioStream.pipe(stream);
     }
 
     async switchLanguage(newLanguage) {
@@ -89,19 +93,18 @@ export class CallHandler {
         this.pendingLanguageSwitch = true;
         this.logger.info({ from: this.currentLanguage, to: newLanguage }, 'Switching transcriber language');
 
+        const previousStream = this.googleStream;
         try {
-            // Close current stream
-            if (this.googleStream) {
-                this.audioStream.unpipe(this.googleStream);
-                this.googleStream.end();
-            }
-
+            // Open the new stream first; only commit the language once it exists
+            if (previousStream) this.audioStream.unpipe(previousStream);
+            this.createSpeechStream(newLanguage);
             this.currentLanguage = newLanguage;
             this.userMessagesSinceLastSwitch = 0;
-
-            this.createSpeechStream(newLanguage);
+            previousStream?.end();
             this.logger.info('New Google Speech stream initialized with updated language');
         } catch (error) {
+            // Keep transcribing in the previous language rather than going deaf
+            if (previousStream) this.audioStream.pipe(previousStream);
             this.logger.error({ err: error }, 'Failed to switch language');
             wsErrorHandler(error, this.ws);
         } finally {
@@ -286,6 +289,7 @@ export class CallHandler {
         }
 
         if (this.googleStream) {
+            this.audioStream.unpipe(this.googleStream);
             this.googleStream.destroy(); // Ends the recognition stream
             this.logger.debug('Google speech stream destroyed.');
         }

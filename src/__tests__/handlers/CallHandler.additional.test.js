@@ -189,8 +189,9 @@ describe('CallHandler - Additional Tests', () => {
         expect(handler.currentLanguage).toBe('en');
     });
 
-    test('switchLanguage should report errors and reset the pending flag', async () => {
+    test('switchLanguage should keep the previous stream and language when the new stream fails', async () => {
         const streamError = new Error('stream error');
+        const previousStream = handler.googleStream;
         handler.speechClient.streamingRecognize.mockImplementationOnce(() => { throw streamError; });
 
         await handler.switchLanguage('vi');
@@ -198,6 +199,27 @@ describe('CallHandler - Additional Tests', () => {
         expect(mockLogger.error).toHaveBeenCalledWith({ err: streamError }, 'Failed to switch language');
         expect(wsErrorHandler).toHaveBeenCalledWith(streamError, mockWs);
         expect(handler.pendingLanguageSwitch).toBe(false);
+        expect(handler.currentLanguage).toBe('en');
+        expect(handler.googleStream).toBe(previousStream);
+        expect(previousStream.end).not.toHaveBeenCalled();
+
+        // Audio must still reach the previous stream
+        const received = new Promise(resolve => previousStream.once('data', resolve));
+        handler.audioStream.write(Buffer.from('audio'));
+        await expect(received).resolves.toEqual(Buffer.from('audio'));
+    });
+
+    test('late results from a replaced stream should be ignored after a language switch', async () => {
+        const previousStream = handler.googleStream;
+        await handler.switchLanguage('vi');
+        expect(handler.googleStream).not.toBe(previousStream);
+
+        await emitEvent(previousStream, 'data', speechData('stale transcript'));
+        emitEvent(previousStream, 'error', new Error('stale error'));
+
+        expect(mockLanguageService.detectLanguage).not.toHaveBeenCalled();
+        expect(handler.conversationLog).toEqual([]);
+        expect(wsErrorHandler).not.toHaveBeenCalled();
     });
 
     test('handleTranscriberFinal should handle goodbye response', async () => {
