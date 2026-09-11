@@ -8,9 +8,6 @@ const envSchema = Joi.object().keys({
     PORT: Joi.number().default(3000),
     LOG_LEVEL: Joi.string().valid('trace', 'debug', 'info', 'warn', 'error', 'fatal').default('info'),
 
-    // AssemblyAI
-    ASSEMBLYAI_API_KEY: Joi.string().required(),
-
     // Twilio
     TWILIO_ACCOUNT_SID: Joi.string().required(),
     TWILIO_AUTH_TOKEN: Joi.string().required(),
@@ -44,9 +41,6 @@ const config = {
     env: envVars.NODE_ENV,
     port: envVars.PORT,
     logLevel: envVars.LOG_LEVEL,
-    assemblyAi: {
-        apiKey: envVars.ASSEMBLYAI_API_KEY,
-    },
     twilio: {
         accountSid: envVars.TWILIO_ACCOUNT_SID,
         authToken: envVars.TWILIO_AUTH_TOKEN,
