@@ -2,7 +2,19 @@ import { SpeechClient } from '@google-cloud/speech';
 import { PassThrough } from 'stream';
 import { wsErrorHandler } from '../middleware/errorHandler.js';
 import { ExternalServiceError } from '../services/error/AppError.js';
-import config from '../config/index.js'; // Optional if needed
+
+// App-wide language codes are short ISO codes ('en', 'vi', ...) shared with
+// LanguageService / TTSService / BusinessService. Google STT requires BCP-47.
+const STT_LANGUAGE_MAP = {
+    en: 'en-US',
+    vi: 'vi-VN',
+    ja: 'ja-JP',
+    ko: 'ko-KR',
+    zh: 'cmn-Hans-CN',
+    es: 'es-ES',
+    fr: 'fr-FR',
+    de: 'de-DE',
+};
 
 export class CallHandler {
     constructor(ws, { logger, llmService, businessService, languageService, conversationService, twilioService }) {
@@ -19,7 +31,7 @@ export class CallHandler {
         this.phoneNumberSid = null;
         this.conversationLog = [];
         this.customerInfo = null;
-        this.currentLanguage = 'en-US'; // Start with English
+        this.currentLanguage = 'en'; // Short ISO code, mapped via STT_LANGUAGE_MAP for Google STT
         this.callSid = null;
         this.host = null;
         this.userMessagesSinceLastSwitch = 0; // Track messages for language detection
@@ -36,22 +48,7 @@ export class CallHandler {
 
     async initialize() {
         try {
-            const request = {
-                config: {
-                    encoding: 'MULAW',
-                    sampleRateHertz: 8000,
-                    languageCode: this.currentLanguage,
-                    enableAutomaticPunctuation: true
-                },
-                interimResults: true,
-            };
-
-            this.googleStream = this.speechClient
-                .streamingRecognize(request)
-                .on('error', this.handleTranscriberError.bind(this))
-                .on('data', this.handleTranscriberData.bind(this));
-
-            this.audioStream.pipe(this.googleStream);
+            this.createSpeechStream(this.currentLanguage);
 
             this.ws.on('message', this.handleWsMessage.bind(this));
             this.ws.on('close', this.handleWsClose.bind(this));
@@ -61,6 +58,26 @@ export class CallHandler {
             this.logger.error({ err: error }, 'Failed to initialize Google Speech stream.');
             wsErrorHandler(error, this.ws);
         }
+    }
+
+    // Open a streamingRecognize session for the given app language and pipe call audio into it.
+    createSpeechStream(language) {
+        const request = {
+            config: {
+                encoding: 'MULAW',
+                sampleRateHertz: 8000,
+                languageCode: STT_LANGUAGE_MAP[language] || STT_LANGUAGE_MAP.en,
+                enableAutomaticPunctuation: true
+            },
+            interimResults: true,
+        };
+
+        this.googleStream = this.speechClient
+            .streamingRecognize(request)
+            .on('error', this.handleTranscriberError.bind(this))
+            .on('data', this.handleTranscriberData.bind(this));
+
+        this.audioStream.pipe(this.googleStream);
     }
 
     async switchLanguage(newLanguage) {
@@ -75,31 +92,14 @@ export class CallHandler {
         try {
             // Close current stream
             if (this.googleStream) {
-                this.googleStream.end();
                 this.audioStream.unpipe(this.googleStream);
+                this.googleStream.end();
             }
 
-            // Update language
             this.currentLanguage = newLanguage;
             this.userMessagesSinceLastSwitch = 0;
 
-            // Initialize new stream with new language
-            const request = {
-                config: {
-                    encoding: 'MULAW',
-                    sampleRateHertz: 8000,
-                    languageCode: newLanguage,
-                    enableAutomaticPunctuation: true
-                },
-                interimResults: true,
-            };
-
-            this.googleStream = this.speechClient
-                .streamingRecognize(request)
-                .on('error', this.handleTranscriberError.bind(this))
-                .on('data', this.handleTranscriberData.bind(this));
-
-            this.audioStream.pipe(this.googleStream);
+            this.createSpeechStream(newLanguage);
             this.logger.info('New Google Speech stream initialized with updated language');
         } catch (error) {
             this.logger.error({ err: error }, 'Failed to switch language');

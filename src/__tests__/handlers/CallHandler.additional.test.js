@@ -1,19 +1,25 @@
 import { CallHandler } from '../../handlers/CallHandler';
-import { RealtimeTranscriber } from 'assemblyai';
+import { SpeechClient } from '@google-cloud/speech';
 import { wsErrorHandler } from '../../middleware/errorHandler';
 import { ExternalServiceError } from '../../services/error/AppError.js';
 
 // --- Mocks ---
-jest.mock('assemblyai', () => ({
-    RealtimeTranscriber: jest.fn().mockImplementation(() => {
-        return {
-            connect: jest.fn(() => Promise.resolve()),
-            on: jest.fn(),
-            sendAudio: jest.fn(),
-            close: jest.fn(() => Promise.resolve()),
-        };
-    }),
-}));
+// The mocked recognize stream is a real PassThrough so CallHandler can pipe()
+// audio into it; on/end/destroy are spied so tests can assert and emit events.
+jest.mock('@google-cloud/speech', () => {
+    const { PassThrough } = jest.requireActual('stream');
+    return {
+        SpeechClient: jest.fn().mockImplementation(() => ({
+            streamingRecognize: jest.fn(() => {
+                const stream = new PassThrough();
+                jest.spyOn(stream, 'on');
+                jest.spyOn(stream, 'end');
+                jest.spyOn(stream, 'destroy');
+                return stream;
+            }),
+        })),
+    };
+});
 
 jest.mock('../../middleware/errorHandler.js', () => ({
     wsErrorHandler: jest.fn(),
@@ -26,11 +32,25 @@ jest.mock('../../services/llm/OpenAIService');
 jest.mock('../../services/language/LanguageService');
 jest.mock('../../services/conversation/ConversationService');
 jest.mock('../../services/twilio/TwilioService');
-jest.mock('../../services/business/NailSalonService'); 
+jest.mock('../../services/business/NailSalonService');
 
 // Mock the factories
 jest.mock('../../services/llm/LLMServiceFactory');
 jest.mock('../../services/business/BusinessServiceFactory');
+
+// Build a Google streamingRecognize data event
+const speechData = (transcript, isFinal = true) => ({
+    results: [{ alternatives: [{ transcript }], isFinal }],
+});
+
+const startMessage = JSON.stringify({
+    event: 'start',
+    streamSid: 'stream123',
+    start: {
+        customParameters: { caller_id: 'user', phone_number_sid: 'PNsid', host: 'host.com' },
+        callSid: 'CAcall'
+    }
+});
 
 describe('CallHandler - Additional Tests', () => {
     let mockWs;
@@ -40,10 +60,9 @@ describe('CallHandler - Additional Tests', () => {
     let mockLanguageService;
     let mockConversationService;
     let mockTwilioService;
-    let mockTranscriberInstance;
     let handler;
 
-    // Helper to simulate events
+    // Helper to simulate events registered via emitter.on(...)
     const emitEvent = (emitter, eventName, ...args) => {
         const handler = emitter.on.mock.calls.find(call => call[0] === eventName)?.[1];
         if (handler) {
@@ -52,30 +71,36 @@ describe('CallHandler - Additional Tests', () => {
         throw new Error(`No handler registered for event ${eventName} on mock`);
     };
 
+    const createHandler = (ws) => new CallHandler(ws, {
+        logger: mockLogger,
+        llmService: mockLlmService,
+        businessService: mockBusinessService,
+        languageService: mockLanguageService,
+        conversationService: mockConversationService,
+        twilioService: mockTwilioService
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
 
-        // Mock WebSocket
         mockWs = {
             send: jest.fn((data, callback) => {
                 if (callback) callback();
             }),
             close: jest.fn(),
             on: jest.fn(),
-            readyState: 1, // Simulate OPEN state initially
+            readyState: 1,
         };
 
-        // Mock Logger
         mockLogger = {
             info: jest.fn(),
             debug: jest.fn(),
             error: jest.fn(),
             warn: jest.fn(),
             trace: jest.fn(),
-            child: jest.fn().mockReturnThis(), // Simple child mock
+            child: jest.fn().mockReturnThis(),
         };
 
-        // Mock Service Instances
         mockLlmService = {
             detectIntent: jest.fn().mockResolvedValue('MockIntent'),
             detectIntentAndHandle: jest.fn().mockResolvedValue('No action required.'),
@@ -102,309 +127,191 @@ describe('CallHandler - Additional Tests', () => {
             forwardCall: jest.fn().mockResolvedValue(undefined),
         };
 
-        // Instantiate CallHandler
-        handler = new CallHandler(mockWs, { 
-            logger: mockLogger, 
-            llmService: mockLlmService,
-            businessService: mockBusinessService,
-            languageService: mockLanguageService,
-            conversationService: mockConversationService,
-            twilioService: mockTwilioService
-        });
-        
-        // Get the mock instance
-        if (RealtimeTranscriber.mock.results.length !== 1 || RealtimeTranscriber.mock.results[0].type !== 'return') {
-            throw new Error(`Expected RealtimeTranscriber constructor mock to have been called and returned once.`);
-        }
-        mockTranscriberInstance = RealtimeTranscriber.mock.results[0].value;
-
-        if (!mockTranscriberInstance) {
-            throw new Error("Mock Transcriber instance was not created or retrieved correctly");
-        }
+        handler = createHandler(mockWs);
     });
 
-    test('handleTranscriberOpen should log info', async () => {
-        await emitEvent(mockTranscriberInstance, 'open');
-        expect(mockLogger.info).toHaveBeenCalledWith('Transcriber connection open.');
+    test('handleTranscriberData should log trace for interim results', async () => {
+        await emitEvent(handler.googleStream, 'data', speechData('partial text', false));
+
+        expect(mockLogger.trace).toHaveBeenCalledWith({ transcript: 'partial text' }, 'Partial transcript received.');
+        expect(mockLanguageService.detectLanguage).not.toHaveBeenCalled();
     });
 
-    test('handleTranscriberPartial should log trace for non-empty text', async () => {
-        await emitEvent(mockTranscriberInstance, 'transcript.partial', { text: 'partial text' });
-        expect(mockLogger.trace).toHaveBeenCalledWith(
-            { transcript: 'partial text' }, 
-            "Partial transcript received"
+    test('handleTranscriberData should ignore empty transcripts', async () => {
+        await emitEvent(handler.googleStream, 'data', { results: [] });
+        await emitEvent(handler.googleStream, 'data', speechData('', true));
+
+        expect(mockLogger.trace).not.toHaveBeenCalled();
+        expect(mockLanguageService.detectLanguage).not.toHaveBeenCalled();
+    });
+
+    test('should switch transcriber language after two consecutive non-English messages', async () => {
+        await emitEvent(mockWs, 'message', startMessage);
+        mockLanguageService.detectLanguage.mockResolvedValue('vi');
+        const firstStream = handler.googleStream;
+
+        // First message: language noted but no switch yet
+        await emitEvent(handler.googleStream, 'data', speechData('Xin chào'));
+        expect(handler.currentLanguage).toBe('en');
+        expect(handler.speechClient.streamingRecognize).toHaveBeenCalledTimes(1);
+        expect(mockLanguageService.translate).not.toHaveBeenCalled();
+
+        // Second message: switch to Vietnamese
+        await emitEvent(handler.googleStream, 'data', speechData('Tôi muốn đặt lịch'));
+
+        expect(handler.currentLanguage).toBe('vi');
+        expect(firstStream.end).toHaveBeenCalledTimes(1);
+        expect(handler.googleStream).not.toBe(firstStream);
+        expect(handler.speechClient.streamingRecognize).toHaveBeenCalledTimes(2);
+        expect(handler.speechClient.streamingRecognize).toHaveBeenLastCalledWith(
+            expect.objectContaining({ config: expect.objectContaining({ languageCode: 'vi-VN' }) })
+        );
+        expect(mockBusinessService.getSystemPrompt).toHaveBeenLastCalledWith('vi', 'PNsid');
+        expect(mockLanguageService.translate).toHaveBeenCalledWith('Mock AI Response', 'vi');
+        expect(mockTwilioService.getTwilioMessage).toHaveBeenLastCalledWith('Mock AI Response [translated to vi]', 'stream123', 'vi');
+    });
+
+    test('switchLanguage should fall back to en-US for unknown language codes', async () => {
+        await handler.switchLanguage('xx');
+
+        expect(handler.speechClient.streamingRecognize).toHaveBeenLastCalledWith(
+            expect.objectContaining({ config: expect.objectContaining({ languageCode: 'en-US' }) })
         );
     });
 
-    test('handleTranscriberPartial should not log for empty text', async () => {
-        await emitEvent(mockTranscriberInstance, 'transcript.partial', { text: '' });
-        expect(mockLogger.trace).not.toHaveBeenCalled();
+    test('switchLanguage should skip when a switch is already pending', async () => {
+        handler.pendingLanguageSwitch = true;
+
+        await handler.switchLanguage('vi');
+
+        expect(mockLogger.debug).toHaveBeenCalledWith('Language switch already in progress, skipping');
+        expect(handler.speechClient.streamingRecognize).toHaveBeenCalledTimes(1);
+        expect(handler.currentLanguage).toBe('en');
     });
 
-    test('handleTranscriberFinal should handle non-English language', async () => {
-        // Simulate start event first to set call details
-        const startMessage = JSON.stringify({ 
-            event: 'start', 
-            streamSid: 'stream123', 
-            start: { 
-                customParameters: { 
-                    caller_id: 'user', 
-                    phone_number_sid: 'PNsid',
-                    host: 'host.com'
-                }, 
-                callSid: 'CAcall' 
-            } 
-        });
-        await emitEvent(mockWs, 'message', startMessage);
-        
-        // Set language detection to return non-English
-        mockLanguageService.detectLanguage.mockResolvedValueOnce('vi');
-        
-        const finalTranscript = { text: 'Xin chào' };
-        
-        await emitEvent(mockTranscriberInstance, 'transcript.final', finalTranscript);
+    test('switchLanguage should report errors and reset the pending flag', async () => {
+        const streamError = new Error('stream error');
+        handler.speechClient.streamingRecognize.mockImplementationOnce(() => { throw streamError; });
 
-        expect(mockLanguageService.detectLanguage).toHaveBeenCalledWith('Xin chào');
-        expect(mockLlmService.getResponse).toHaveBeenCalled();
-        expect(mockLanguageService.translate).toHaveBeenCalledWith('Mock AI Response', 'vi');
+        await handler.switchLanguage('vi');
+
+        expect(mockLogger.error).toHaveBeenCalledWith({ err: streamError }, 'Failed to switch language');
+        expect(wsErrorHandler).toHaveBeenCalledWith(streamError, mockWs);
+        expect(handler.pendingLanguageSwitch).toBe(false);
     });
 
     test('handleTranscriberFinal should handle goodbye response', async () => {
-        // Simulate start event first to set call details
-        const startMessage = JSON.stringify({ 
-            event: 'start', 
-            streamSid: 'stream123', 
-            start: { 
-                customParameters: { 
-                    caller_id: 'user', 
-                    phone_number_sid: 'PNsid',
-                    host: 'host.com'
-                }, 
-                callSid: 'CAcall' 
-            } 
-        });
         await emitEvent(mockWs, 'message', startMessage);
-        
-        // Set isGoodbye to return true
         mockLlmService.isGoodbye.mockResolvedValueOnce(true);
-        
-        const finalTranscript = { text: 'Goodbye' };
-        
-        // Mock setTimeout
-        const originalSetTimeout = global.setTimeout;
-        global.setTimeout = jest.fn((callback, delay) => {
-            callback(); // Execute the callback immediately
-            return 123; // Return a timeout ID
-        });
-        
-        await emitEvent(mockTranscriberInstance, 'transcript.final', finalTranscript);
 
-        expect(mockLlmService.isGoodbye).toHaveBeenCalledWith('Goodbye');
-        expect(mockBusinessService.getGoodbyePrompt).toHaveBeenCalledWith('en', 'PNsid');
-        
-        // Verify setTimeout was called
-        expect(global.setTimeout).toHaveBeenCalledWith(expect.any(Function), expect.any(Number));
-        
-        // Verify ws.close was called
-        expect(mockWs.close).toHaveBeenCalled();
-        
-        // Restore original setTimeout
-        global.setTimeout = originalSetTimeout;
+        const originalSetTimeout = global.setTimeout;
+        global.setTimeout = jest.fn((callback) => {
+            callback(); // Execute immediately
+            return 123;
+        });
+
+        try {
+            await emitEvent(handler.googleStream, 'data', speechData('Goodbye'));
+
+            expect(mockLlmService.isGoodbye).toHaveBeenCalledWith('Goodbye');
+            expect(mockBusinessService.getGoodbyePrompt).toHaveBeenCalledWith('en', 'PNsid');
+            expect(global.setTimeout).toHaveBeenCalledWith(expect.any(Function), expect.any(Number));
+            expect(mockWs.close).toHaveBeenCalled();
+        } finally {
+            global.setTimeout = originalSetTimeout;
+        }
     });
 
     test('handleTranscriberFinal should handle WebSocket send error', async () => {
-        // Simulate start event first to set call details
-        const startMessage = JSON.stringify({ 
-            event: 'start', 
-            streamSid: 'stream123', 
-            start: { 
-                customParameters: { 
-                    caller_id: 'user', 
-                    phone_number_sid: 'PNsid',
-                    host: 'host.com'
-                }, 
-                callSid: 'CAcall' 
-            } 
-        });
         await emitEvent(mockWs, 'message', startMessage);
-        
-        // Mock WebSocket send to call callback with error
+
         const sendError = new Error('WebSocket send error');
         mockWs.send = jest.fn((data, callback) => {
             if (callback) callback(sendError);
         });
-        
-        const finalTranscript = { text: 'Hello' };
-        
-        // This should throw an error that gets caught in the try/catch
-        await emitEvent(mockTranscriberInstance, 'transcript.final', finalTranscript);
-        
-        // The error should be passed to wsErrorHandler
+
+        await emitEvent(handler.googleStream, 'data', speechData('Hello'));
+
         expect(wsErrorHandler).toHaveBeenCalledWith(expect.any(ExternalServiceError), mockWs);
         expect(mockLogger.error).toHaveBeenCalledWith(
-            expect.objectContaining({ err: expect.any(Error) }), 
+            expect.objectContaining({ err: expect.any(Error) }),
             'Error processing final transcript.'
         );
     });
 
-    test('handleTranscriberError should log error and call wsErrorHandler', async () => {
+    test('handleTranscriberError should log error and call wsErrorHandler', () => {
         const error = new Error('Transcriber error');
-        
-        await emitEvent(mockTranscriberInstance, 'error', error);
-        
-        expect(mockLogger.error).toHaveBeenCalledWith(
-            { err: error }, 
-            'Transcriber error.'
-        );
+
+        emitEvent(handler.googleStream, 'error', error);
+
+        expect(mockLogger.error).toHaveBeenCalledWith({ err: error }, 'Google Speech-to-Text error.');
         expect(wsErrorHandler).toHaveBeenCalledWith(
-            expect.objectContaining({ 
-                message: expect.stringContaining('Transcriber error')
-            }), 
+            expect.objectContaining({ service: 'Transcription', message: 'Transcriber error' }),
             mockWs
         );
     });
 
-    test('handleTranscriberClose should log info', async () => {
-        await emitEvent(mockTranscriberInstance, 'close');
-        expect(mockLogger.info).toHaveBeenCalledWith('Transcriber connection closed.');
-    });
-
     test('handleWsMessage should handle connected event', async () => {
-        const connectedMessage = JSON.stringify({
-            event: 'connected'
-        });
-        
-        await emitEvent(mockWs, 'message', connectedMessage);
-        
+        await emitEvent(mockWs, 'message', JSON.stringify({ event: 'connected' }));
+
         expect(mockLogger.info).toHaveBeenCalledWith('Twilio media stream signaling connected.');
     });
 
     test('handleWsMessage should handle stop event', async () => {
-        const stopMessage = JSON.stringify({
-            event: 'stop'
-        });
-        
-        await emitEvent(mockWs, 'message', stopMessage);
-        
+        await emitEvent(mockWs, 'message', JSON.stringify({ event: 'stop' }));
+
         expect(mockLogger.info).toHaveBeenCalledWith('Twilio media stream stopped.');
     });
 
     test('handleWsMessage should handle unknown event', async () => {
-        const unknownMessage = JSON.stringify({
-            event: 'unknown'
-        });
-        
-        await emitEvent(mockWs, 'message', unknownMessage);
-        
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-            { event: 'unknown' }, 
-            'Received unknown WebSocket event type'
-        );
-    });
+        await emitEvent(mockWs, 'message', JSON.stringify({ event: 'unknown' }));
 
-    test('handleWsMessage should handle media event before transcriber connection', async () => {
-        // Set transcriberConnectionPromise to null to simulate the condition
-        handler.transcriberConnectionPromise = null;
-        
-        const mediaMessage = JSON.stringify({
-            event: 'media',
-            media: {
-                payload: 'base64data'
-            }
-        });
-        
-        await emitEvent(mockWs, 'message', mediaMessage);
-        
-        expect(mockLogger.warn).toHaveBeenCalledWith('Received media before transcriber connection promise exists.');
-        expect(mockTranscriberInstance.sendAudio).not.toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith({ event: 'unknown' }, 'Received unknown WebSocket event type');
     });
 
     test('handleWsMessage should handle JSON parse error', async () => {
-        const invalidMessage = 'not valid json';
-        
-        await emitEvent(mockWs, 'message', invalidMessage);
-        
+        await emitEvent(mockWs, 'message', 'not valid json');
+
         expect(mockLogger.error).toHaveBeenCalledWith(
-            expect.objectContaining({ 
-                err: expect.any(Error),
-                rawMessage: 'not valid json'
-            }), 
+            expect.objectContaining({ err: expect.any(Error), rawMessage: 'not valid json' }),
             'Error processing WebSocket message.'
         );
         expect(wsErrorHandler).toHaveBeenCalled();
     });
 
     test('handleWsClose should handle error when saving conversation', async () => {
-        // Add something to the log
         handler.conversationLog.push({ role: 'user', content: 'test' });
-        handler.streamSid = 'stream123'; // Set streamSid
-        
-        // Mock saveConversation to throw error
+        handler.streamSid = 'stream123';
         const saveError = new Error('Save error');
         mockConversationService.saveConversation.mockRejectedValueOnce(saveError);
-        
+
         await emitEvent(mockWs, 'close');
-        
-        expect(mockTranscriberInstance.close).toHaveBeenCalled();
-        expect(mockConversationService.saveConversation).toHaveBeenCalledWith(
-            handler.conversationLog, 
-            'stream123'
-        );
+
+        expect(handler.googleStream.destroy).toHaveBeenCalled();
+        expect(mockConversationService.saveConversation).toHaveBeenCalledWith(handler.conversationLog, 'stream123');
         expect(mockLogger.error).toHaveBeenCalledWith(
-            expect.objectContaining({ 
-                err: saveError,
-                streamSid: 'stream123'
-            }), 
+            expect.objectContaining({ err: saveError, streamSid: 'stream123' }),
             'Failed to save conversation log.'
         );
     });
 
-    test('initialize should handle transcriber connection error', async () => {
-        // Reset the mock implementation
-        RealtimeTranscriber.mockReset();
-        
-        // Create a new mock that will throw on connect
-        const connectError = new Error('Connection error');
-        RealtimeTranscriber.mockImplementation(() => ({
-            connect: jest.fn().mockRejectedValue(connectError),
-            on: jest.fn(),
+    test('handleWsClose should not save an empty conversation', async () => {
+        await emitEvent(mockWs, 'close');
+
+        expect(mockConversationService.saveConversation).not.toHaveBeenCalled();
+    });
+
+    test('initialize should handle Google Speech stream creation error', () => {
+        const streamError = new Error('Stream creation error');
+        SpeechClient.mockImplementationOnce(() => ({
+            streamingRecognize: jest.fn(() => { throw streamError; }),
         }));
-        
-        // Create a new handler with the error mock
-        const newMockWs = {
-            send: jest.fn(),
-            close: jest.fn(),
-            on: jest.fn(),
-            readyState: 1,
-        };
-        
-        // Create a new handler
-        const errorHandler = new CallHandler(newMockWs, { 
-            logger: mockLogger, 
-            llmService: mockLlmService,
-            businessService: mockBusinessService,
-            languageService: mockLanguageService,
-            conversationService: mockConversationService,
-            twilioService: mockTwilioService
-        });
-        
-        // Manually trigger the error handling by calling the catch handler
-        // This is a workaround since the promise rejection happens asynchronously
-        // and we can't easily wait for it in the test
-        const connectPromise = errorHandler.transcriberConnectionPromise;
-        if (connectPromise) {
-            try {
-                await connectPromise;
-            } catch (error) {
-                // This should trigger the error handling in the initialize method
-            }
-        }
-        
-        // Verify the error was handled correctly
-        expect(mockLogger.error).toHaveBeenCalledWith(
-            expect.objectContaining({ err: connectError }), 
-            'Transcriber connection failed.'
-        );
-        expect(wsErrorHandler).toHaveBeenCalledWith(connectError, newMockWs);
-    }, 1000); // Set a timeout of 1 second for this test
+        const newMockWs = { send: jest.fn(), close: jest.fn(), on: jest.fn(), readyState: 1 };
+
+        createHandler(newMockWs);
+
+        expect(mockLogger.error).toHaveBeenCalledWith({ err: streamError }, 'Failed to initialize Google Speech stream.');
+        expect(wsErrorHandler).toHaveBeenCalledWith(streamError, newMockWs);
+        expect(newMockWs.on).not.toHaveBeenCalled();
+    });
 });
