@@ -15,6 +15,7 @@ jest.mock('../../../services/appointmentService.js');
 describe('BusinessServiceFactory', () => {
     let mockContainer;
     let mockNailSalonService;
+    const mockLlmService = { extractAppointmentTime: jest.fn() };
     
     beforeEach(() => {
         // Reset mocks
@@ -29,17 +30,22 @@ describe('BusinessServiceFactory', () => {
         
         // Setup mock implementations
         mockContainer.register = jest.fn();
+        mockContainer.registerInstance = jest.fn();
         mockContainer.get = jest.fn().mockReturnValue(mockNailSalonService);
     });
     
     describe('initialize', () => {
         it('should register all required services in the container', () => {
-            BusinessServiceFactory.initialize();
+            BusinessServiceFactory.initialize(mockLlmService);
             
             // Verify service registrations
+            expect(mockContainer.registerInstance).toHaveBeenCalledWith('llmService', mockLlmService);
             expect(mockContainer.register).toHaveBeenCalledWith('languageService', LanguageService);
             expect(mockContainer.register).toHaveBeenCalledWith('customerService', CustomerService);
-            expect(mockContainer.register).toHaveBeenCalledWith('appointmentService', AppointmentService);
+            expect(mockContainer.register).toHaveBeenCalledWith('appointmentService', AppointmentService, [
+                'customerService',
+                'llmService'
+            ]);
             expect(mockContainer.register).toHaveBeenCalledWith('nailSalonService', NailSalonService, [
                 'languageService',
                 'customerService',
@@ -48,12 +54,18 @@ describe('BusinessServiceFactory', () => {
             
             expect(mockContainer.register).toHaveBeenCalledTimes(4);
         });
+
+        it('should throw if no LLM service is provided', () => {
+            expect(() => BusinessServiceFactory.initialize())
+                .toThrow('LLM service instance is required for BusinessServiceFactory initialization.');
+            expect(mockContainer.register).not.toHaveBeenCalled();
+        });
     });
     
     describe('createService', () => {
         beforeEach(() => {
             // Initialize the factory before each test
-            BusinessServiceFactory.initialize();
+            BusinessServiceFactory.initialize(mockLlmService);
         });
         
         it('should create NailSalonService by default', () => {
@@ -87,7 +99,7 @@ describe('BusinessServiceFactory', () => {
     
     describe('error handling', () => {
         it('should propagate container errors', () => {
-            BusinessServiceFactory.initialize();
+            BusinessServiceFactory.initialize(mockLlmService);
             
             const error = new Error('Service not found');
             mockContainer.get.mockImplementationOnce(() => {

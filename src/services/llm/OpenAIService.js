@@ -1,6 +1,6 @@
 import { BaseLLMService } from './BaseLLMService.js';
 import OpenAI from 'openai';
-import { intentFunctions } from './intentFunctions.js';
+import { intentFunctions, appointmentTimeFunctions } from './intentFunctions.js';
 import { ExternalServiceError } from '../error/AppError.js';
 import config from '../../config/index.js'; // Import config
 
@@ -66,6 +66,37 @@ export class OpenAIService extends BaseLLMService {
         } catch (error) {
             console.error('OpenAI Error in getResponse:', error);
             throw new ExternalServiceError('OpenAI', `Error getting response: ${error.message}`);
+        }
+    }
+
+    async extractAppointmentTime(userMessage, timeZone) {
+        // Give the model "now" in the salon's zone so relative dates resolve correctly
+        const now = new Date().toLocaleString('en-US', { timeZone, dateStyle: 'full', timeStyle: 'long' });
+        try {
+            const response = await this.openai.chat.completions.create({
+                model: "gpt-4-turbo",
+                messages: [
+                    {
+                        role: "system",
+                        content: `The current date and time is ${now} (time zone: ${timeZone}). ` +
+                            `Resolve relative expressions such as "tomorrow" or "next Friday" against it. ` +
+                            `Only extract a time the customer actually mentioned; never guess one. ` +
+                            `If the customer gave a date but no clock time, omit appointment_time.`
+                    },
+                    { role: "user", content: userMessage }
+                ],
+                functions: appointmentTimeFunctions,
+                function_call: { name: "extract_appointment_time" },
+            });
+
+            const functionResponse = response.choices[0].message.function_call;
+            const { appointment_time: appointmentTime } = functionResponse ? JSON.parse(functionResponse.arguments) : {};
+            // A date without a clock time ("next Friday") must not become a midnight booking
+            const hasClockTime = /T\d{2}:\d{2}/.test(appointmentTime || '');
+            return hasClockTime && !Number.isNaN(Date.parse(appointmentTime)) ? appointmentTime : null;
+        } catch (error) {
+            console.error('OpenAI Error in extractAppointmentTime:', error);
+            throw new ExternalServiceError('OpenAI', `Error extracting appointment time: ${error.message}`);
         }
     }
 

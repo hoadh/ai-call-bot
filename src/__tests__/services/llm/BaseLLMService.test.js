@@ -61,6 +61,11 @@ describe('BaseLLMService', () => {
                 .rejects.toThrow("Method 'getResponse' must be implemented");
         });
         
+        it('should throw error when calling unimplemented extractAppointmentTime', async () => {
+            await expect(partialService.extractAppointmentTime('tomorrow at 3', 'UTC'))
+                .rejects.toThrow("Method 'extractAppointmentTime' must be implemented");
+        });
+        
         it('should throw error when calling unimplemented isGoodbye', async () => {
             await expect(partialService.isGoodbye('test'))
                 .rejects.toThrow("Method 'isGoodbye' must be implemented");

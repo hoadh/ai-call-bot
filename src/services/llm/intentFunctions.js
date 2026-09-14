@@ -27,29 +27,23 @@ export const intentFunctions = [
     }
 ];
 
-export const intentHandlingFunctions = [
+// Used to pull a concrete date/time out of a booking request. Relative
+// phrases ("tomorrow at 3") are resolved by the LLM against the current
+// time supplied in the system message.
+export const appointmentTimeFunctions = [
     {
-        name: "handle_appointment",
-        description: "Manage nail salon appointments",
+        name: "extract_appointment_time",
+        description: "Extract the appointment date and time the customer asked for",
         parameters: {
             type: "object",
             properties: {
-                action: {
-                    type: "string",
-                    enum: ["Book_Appointment", "Reschedule_Appointment", "Cancel_Appointment"],
-                    description: "The action to perform on the appointment"
-                },
-                phone_number: {
-                    type: "string",
-                    description: "The phone number of the customer"
-                },
                 appointment_time: {
                     type: "string",
                     format: "date-time",
-                    description: "The requested appointment time (ISO 8601 format)"
+                    description: "The requested appointment date AND clock time in ISO 8601 format with timezone offset. Omit unless the customer mentioned both a date (possibly relative) and a time of day."
                 }
             },
-            required: ["action", "phone_number"]
+            required: []
         }
     }
-]; 
+];

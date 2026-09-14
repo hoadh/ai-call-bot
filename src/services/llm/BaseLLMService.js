@@ -18,6 +18,11 @@ export class BaseLLMService {
         throw new Error("Method 'getResponse' must be implemented");
     }
 
+    // Resolve a spoken request ("tomorrow at 3pm") to an ISO 8601 string, or null
+    async extractAppointmentTime(userMessage, timeZone) {
+        throw new Error("Method 'extractAppointmentTime' must be implemented");
+    }
+
     async isGoodbye(text) {
         throw new Error("Method 'isGoodbye' must be implemented");
     }

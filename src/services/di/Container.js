@@ -11,6 +11,11 @@ export class Container {
         });
     }
 
+    // Register an object built outside the container (e.g. the LLM service)
+    registerInstance(serviceName, instance) {
+        this.services.set(serviceName, { instance });
+    }
+
     get(serviceName) {
         // Return existing instance if available
         if (this.instances.has(serviceName)) {
@@ -21,6 +26,9 @@ export class Container {
         const serviceInfo = this.services.get(serviceName);
         if (!serviceInfo) {
             throw new Error(`Service ${serviceName} not found`);
+        }
+        if ('instance' in serviceInfo) {
+            return serviceInfo.instance;
         }
 
         // Resolve dependencies

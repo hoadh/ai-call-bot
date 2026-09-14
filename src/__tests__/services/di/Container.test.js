@@ -57,6 +57,27 @@ describe('Container', () => {
         });
     });
     
+    describe('registerInstance', () => {
+        it('should return the registered object as-is and inject it as a dependency', () => {
+            const llm = { name: 'llm' };
+            class Consumer { constructor(dep) { this.dep = dep; } }
+
+            container.registerInstance('llm', llm);
+            container.register('consumer', Consumer, ['llm']);
+
+            expect(container.get('llm')).toBe(llm);
+            expect(container.get('consumer').dep).toBe(llm);
+        });
+
+        it('should survive clear()', () => {
+            const llm = { name: 'llm' };
+            container.registerInstance('llm', llm);
+            container.clear();
+
+            expect(container.get('llm')).toBe(llm);
+        });
+    });
+
     describe('get', () => {
         it('should create and return a new instance if not already instantiated', () => {
             class TestService {

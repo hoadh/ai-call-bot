@@ -1,6 +1,5 @@
 import { BaseBusinessService } from './BaseBusinessService.js';
 import configService from '../config/ConfigService.js';
-import { AppointmentService } from '../appointmentService.js';
 
 export class NailSalonService extends BaseBusinessService {
     constructor(languageService, customerService, appointmentService) {
@@ -11,20 +10,25 @@ export class NailSalonService extends BaseBusinessService {
     async handleIntent(intent, userMessage, phoneNumber, customerInfo, language = 'en', phoneNumberSid) {
         await configService.loadConfig(phoneNumberSid);
         
+        // Case labels must match the enum in llm/intentFunctions.js
         switch (intent) {
             case 'Book_Appointment':
-                const bookingResult = await this.appointmentService.bookAppointment(
+            case 'Reschedule_Appointment':
+            case 'Cancel_Appointment': {
+                const { message, needsTransfer } = await this.appointmentService.handleAppointmentRequest(
+                    intent,
                     userMessage,
                     phoneNumber,
-                    customerInfo,
                     configService.getAppointmentSettings(phoneNumberSid)
                 );
                 return {
-                    response: bookingResult.message,
-                    shouldTransfer: bookingResult.needsTransfer
+                    // On transfer the caller is forwarded, not spoken to, so skip the translate round-trip
+                    response: needsTransfer ? message : await this.translateResponse(message, language),
+                    shouldTransfer: needsTransfer
                 };
+            }
 
-            case 'Check_Services':
+            case 'Ask_About_Services':
                 const services = configService.getServices(phoneNumberSid);
                 const servicesResponse = this.formatServicesResponse(services, language, phoneNumberSid);
                 return {
@@ -32,7 +36,7 @@ export class NailSalonService extends BaseBusinessService {
                     shouldTransfer: false
                 };
 
-            case 'Check_Prices':
+            case 'Ask_About_Pricing':
                 const pricing = configService.getPricing(phoneNumberSid);
                 const pricesResponse = this.formatPricingResponse(pricing, language);
                 return {
@@ -40,7 +44,7 @@ export class NailSalonService extends BaseBusinessService {
                     shouldTransfer: false
                 };
 
-            case 'Check_Hours':
+            case 'Ask_for_Business_Hours':
                 const hours = configService.getBusinessHours(phoneNumberSid);
                 const hoursResponse = this.formatHoursResponse(hours, language, phoneNumberSid);
                 return {
@@ -48,7 +52,7 @@ export class NailSalonService extends BaseBusinessService {
                     shouldTransfer: false
                 };
 
-            case 'Check_Staff':
+            case 'Specific_Nail_Technician_Request':
                 const availableStaff = configService.getAvailableStaff(phoneNumberSid);
                 const staffResponse = this.formatStaffResponse(availableStaff, language);
                 return {
@@ -56,7 +60,6 @@ export class NailSalonService extends BaseBusinessService {
                     shouldTransfer: false
                 };
 
-            case 'Transfer_To_Human':
             case 'Speak_to_a_Human':
                 return {
                     response: await this.getTransferMessage(language, phoneNumberSid),

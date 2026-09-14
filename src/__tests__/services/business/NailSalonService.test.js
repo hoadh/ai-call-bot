@@ -61,10 +61,11 @@ describe('NailSalonService', () => {
         configService.getTransferPhoneNumber = jest.fn().mockReturnValue('+1234567890');
         
         // Setup appointmentService mock
-        mockAppointmentService.bookAppointment = jest.fn().mockResolvedValue({
+        mockAppointmentService.handleAppointmentRequest = jest.fn().mockResolvedValue({
             message: 'Appointment booked successfully',
             needsTransfer: false
         });
+        mockLanguageService.translate = jest.fn((text, lang) => Promise.resolve(`${text} [${lang}]`));
         
         // Create instance
         nailSalonService = new NailSalonService(mockLanguageService, mockCustomerService, mockAppointmentService);
@@ -90,21 +91,49 @@ describe('NailSalonService', () => {
             );
             
             expect(configService.loadConfig).toHaveBeenCalledWith(phoneNumberSid);
-            expect(mockAppointmentService.bookAppointment).toHaveBeenCalledWith(
+            expect(mockAppointmentService.handleAppointmentRequest).toHaveBeenCalledWith(
+                'Book_Appointment',
                 'I want to book a manicure',
                 '+1234567890',
-                { name: 'John Doe' },
                 { maxDaysAhead: 7 }
             );
+            expect(mockLanguageService.translate).not.toHaveBeenCalled();
             expect(result).toEqual({
                 response: 'Appointment booked successfully',
                 shouldTransfer: false
             });
         });
+
+        it.each(['Reschedule_Appointment', 'Cancel_Appointment'])('should route %s to the appointment service', async (intent) => {
+            await nailSalonService.handleIntent(intent, 'change it', '+1234567890', null, 'en', phoneNumberSid);
+
+            expect(mockAppointmentService.handleAppointmentRequest).toHaveBeenCalledWith(
+                intent, 'change it', '+1234567890', { maxDaysAhead: 7 }
+            );
+        });
+
+        it('should translate the appointment reply for non-English callers', async () => {
+            const result = await nailSalonService.handleIntent('Book_Appointment', 'Đặt lịch', '+1234567890', null, 'vi', phoneNumberSid);
+
+            expect(mockLanguageService.translate).toHaveBeenCalledWith('Appointment booked successfully', 'vi');
+            expect(result).toEqual({ response: 'Appointment booked successfully [vi]', shouldTransfer: false });
+        });
+
+        it('should propagate a transfer request without translating', async () => {
+            mockAppointmentService.handleAppointmentRequest.mockResolvedValueOnce({
+                message: 'Let me transfer you.',
+                needsTransfer: true
+            });
+
+            const result = await nailSalonService.handleIntent('Book_Appointment', 'Đặt lịch', '+1234567890', null, 'vi', phoneNumberSid);
+
+            expect(mockLanguageService.translate).not.toHaveBeenCalled();
+            expect(result).toEqual({ response: 'Let me transfer you.', shouldTransfer: true });
+        });
         
-        it('should handle Check_Services intent', async () => {
+        it('should handle Ask_About_Services intent', async () => {
             const result = await nailSalonService.handleIntent(
-                'Check_Services',
+                'Ask_About_Services',
                 'What services do you offer?',
                 '+1234567890',
                 { name: 'John Doe' },
@@ -120,9 +149,9 @@ describe('NailSalonService', () => {
             expect(result.shouldTransfer).toBe(false);
         });
         
-        it('should handle Check_Prices intent', async () => {
+        it('should handle Ask_About_Pricing intent', async () => {
             const result = await nailSalonService.handleIntent(
-                'Check_Prices',
+                'Ask_About_Pricing',
                 'How much do services cost?',
                 '+1234567890',
                 { name: 'John Doe' },
@@ -138,9 +167,9 @@ describe('NailSalonService', () => {
             expect(result.shouldTransfer).toBe(false);
         });
         
-        it('should handle Check_Hours intent', async () => {
+        it('should handle Ask_for_Business_Hours intent', async () => {
             const result = await nailSalonService.handleIntent(
-                'Check_Hours',
+                'Ask_for_Business_Hours',
                 'When are you open?',
                 '+1234567890',
                 { name: 'John Doe' },
@@ -156,9 +185,9 @@ describe('NailSalonService', () => {
             expect(result.shouldTransfer).toBe(false);
         });
         
-        it('should handle Check_Staff intent', async () => {
+        it('should handle Specific_Nail_Technician_Request intent', async () => {
             const result = await nailSalonService.handleIntent(
-                'Check_Staff',
+                'Specific_Nail_Technician_Request',
                 'Who works there?',
                 '+1234567890',
                 { name: 'John Doe' },
@@ -171,22 +200,6 @@ describe('NailSalonService', () => {
             expect(result.response).toContain('Our available staff members are');
             expect(result.response).toContain('- Jane Doe: Nail art, Gel nails');
             expect(result.shouldTransfer).toBe(false);
-        });
-        
-        it('should handle Transfer_To_Human intent', async () => {
-            const result = await nailSalonService.handleIntent(
-                'Transfer_To_Human',
-                'I want to speak to a person',
-                '+1234567890',
-                { name: 'John Doe' },
-                'en',
-                phoneNumberSid
-            );
-            
-            expect(configService.loadConfig).toHaveBeenCalledWith(phoneNumberSid);
-            expect(configService.getTransferPhoneNumber).toHaveBeenCalledWith(phoneNumberSid);
-            expect(result.response).toContain('I\'ll transfer you to our staff at +1234567890');
-            expect(result.shouldTransfer).toBe(true);
         });
         
         it('should handle Speak_to_a_Human intent', async () => {
@@ -224,7 +237,7 @@ describe('NailSalonService', () => {
         
         it('should handle Vietnamese language', async () => {
             const result = await nailSalonService.handleIntent(
-                'Check_Services',
+                'Ask_About_Services',
                 'Bạn có những dịch vụ gì?',
                 '+1234567890',
                 { name: 'John Doe' },

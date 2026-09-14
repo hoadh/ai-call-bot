@@ -7,11 +7,15 @@ import { AppointmentService } from '../appointmentService.js';
 export class BusinessServiceFactory {
     static container = new Container();
 
-    static initialize() {
+    static initialize(llmService) {
+        if (!llmService) {
+            throw new Error("LLM service instance is required for BusinessServiceFactory initialization.");
+        }
         // Register services
+        this.container.registerInstance('llmService', llmService);
         this.container.register('languageService', LanguageService);
         this.container.register('customerService', CustomerService);
-        this.container.register('appointmentService', AppointmentService);
+        this.container.register('appointmentService', AppointmentService, ['customerService', 'llmService']);
         this.container.register('nailSalonService', NailSalonService, [
             'languageService',
             'customerService',

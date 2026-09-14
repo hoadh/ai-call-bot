@@ -201,6 +201,58 @@ describe('OpenAIService', () => {
         });
     });
     
+    describe('extractAppointmentTime', () => {
+        const withArguments = (args) => ({
+            choices: [{ message: { function_call: { name: 'extract_appointment_time', arguments: args } } }]
+        });
+
+        it('should force the extraction function and return the ISO time', async () => {
+            mockOpenAI.chat.completions.create.mockResolvedValue(withArguments('{"appointment_time":"2025-04-15T10:00:00-07:00"}'));
+
+            const result = await openAIService.extractAppointmentTime('tomorrow at 10', 'America/Los_Angeles');
+
+            expect(result).toBe('2025-04-15T10:00:00-07:00');
+            expect(mockOpenAI.chat.completions.create).toHaveBeenCalledWith(expect.objectContaining({
+                function_call: { name: 'extract_appointment_time' },
+                messages: [
+                    expect.objectContaining({ role: 'system', content: expect.stringContaining('America/Los_Angeles') }),
+                    { role: 'user', content: 'tomorrow at 10' }
+                ]
+            }));
+        });
+
+        it('should return null when no time was mentioned', async () => {
+            mockOpenAI.chat.completions.create.mockResolvedValue(withArguments('{}'));
+
+            await expect(openAIService.extractAppointmentTime('I want to book', 'UTC')).resolves.toBeNull();
+        });
+
+        it('should return null for a date without a clock time', async () => {
+            mockOpenAI.chat.completions.create.mockResolvedValue(withArguments('{"appointment_time":"2025-04-18"}'));
+
+            await expect(openAIService.extractAppointmentTime('next Friday', 'UTC')).resolves.toBeNull();
+        });
+
+        it('should return null for an unparseable time', async () => {
+            mockOpenAI.chat.completions.create.mockResolvedValue(withArguments('{"appointment_time":"sometime soon"}'));
+
+            await expect(openAIService.extractAppointmentTime('soon', 'UTC')).resolves.toBeNull();
+        });
+
+        it('should return null when the model skips the function call', async () => {
+            mockOpenAI.chat.completions.create.mockResolvedValue({ choices: [{ message: { content: 'ok' } }] });
+
+            await expect(openAIService.extractAppointmentTime('hi', 'UTC')).resolves.toBeNull();
+        });
+
+        it('should throw ExternalServiceError on API error', async () => {
+            mockOpenAI.chat.completions.create.mockRejectedValue(new Error('API Error'));
+
+            await expect(openAIService.extractAppointmentTime('tomorrow', 'UTC'))
+                .rejects.toThrow(ExternalServiceError);
+        });
+    });
+
     describe('isGoodbye', () => {
         it('should return true for goodbye message', async () => {
             // Setup mock response

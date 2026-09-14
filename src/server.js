@@ -24,9 +24,6 @@ const server = createServer(app);
 async function initializeServices() {
     logger.info('Initializing services...');
     try {
-        // Initialize DI containers/factories
-        BusinessServiceFactory.initialize();
-        
         // Create standalone services, injecting logger where needed
         const languageService = new LanguageService(/* logger */); // Assuming LanguageService might use logger
         const conversationService = new ConversationService(/* logger */); // Assuming ConversationService might use logger
@@ -34,11 +31,11 @@ async function initializeServices() {
         // Pass logger to conversion function if needed, or handle logging within it
         const twilioService = new TwilioService(logger.child({ service: 'Twilio' }), ttsService, convertToMulaw);
 
-        // Initialize LLM services (depends on languageService)
+        // LLM first: the business layer needs it for appointment-time extraction
         LLMServiceFactory.initialize(languageService);
-        
-        // Create services through factories/DI
         const llmService = LLMServiceFactory.createService(config.services.llmType);
+
+        BusinessServiceFactory.initialize(llmService);
         const businessService = BusinessServiceFactory.createService(config.services.businessType);
         
         logger.info("All services initialized successfully.");
